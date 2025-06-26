@@ -127,7 +127,7 @@ def parse_miner_inputs(
     self,
     sample: Era5Sample,
     hotkeys: List[str],
-    predictions: List[torch.Tensor],
+    responses: List[torch.Tensor],
 ) -> List[MinerData]:
     """
     Convert input to MinerData and calculate (and populate) their penalty fields.
@@ -137,7 +137,7 @@ def parse_miner_inputs(
 
     # Make miner data for each miner that is still alive
     miners_data = []
-    for hotkey, prediction in zip(hotkeys, predictions):
+    for hotkey, prediction in zip(hotkeys, responses):
         uid = lookup.get(hotkey, None)
         if uid is not None:
             miners_data.append(MinerData(uid=uid, hotkey=hotkey, prediction=prediction))

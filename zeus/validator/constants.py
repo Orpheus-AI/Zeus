@@ -18,7 +18,7 @@ WANDB_MAX_LOGS = 95_000
 # the variables miners are tested on, with their respective sampling weight
 ERA5_DATA_VARS: Dict[str, float] = {
     "2m_temperature": 0.8, 
-    "total_precipitation": 5.2
+    "total_precipitation": 0.2
 }
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
