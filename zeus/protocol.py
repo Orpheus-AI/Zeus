@@ -58,7 +58,7 @@ class PredictionSynapse(bt.Synapse, ABC):
     variable: str = Field(
         title="ERA5 variable you are asked to predict",
         description="Each request concerns a single CDS variable in long underscored form",
-        default="",
+        default="2m_temperature",
         frozen=False,
     )
 
