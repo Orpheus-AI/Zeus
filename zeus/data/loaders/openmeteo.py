@@ -40,12 +40,23 @@ class OpenMeteoLoader:
         responses = self.open_meteo_api.weather_api(
             self.open_meteo_url, params=params
         )
-        # get output as grid of [time, lat, lon]
-        output = np.stack(
-            [r.Hourly().Variables(0).ValuesAsNumpy() for r in responses], axis=1
-        ).reshape(-1, sample.x_grid.shape[0], sample.x_grid.shape[1])
-        # OpenMeteo does not use SI units, so convert back
-        output = converter.om_to_era5(output)
 
-        assert output.shape[0] == sample.predict_hours, f"Invalid OpenMeteo response shape"
+        # get output as grid of [time, lat, lon, variables]
+        output = torch.Tensor(np.stack(
+            [
+                np.stack(
+                    [
+                        r.Hourly().Variables(i).ValuesAsNumpy() 
+                        for i in range(r.Hourly().VariablesLength())
+                    ],
+                    axis=-1
+                )
+                for r in responses
+            ],
+            axis=1
+        )).reshape(sample.predict_hours, *sample.x_grid.shape[:2], -1)
+        # [time, lat, lon] in case of single variable output
+        output = output.squeeze(dim=-1)
+        # Convert variable(s) to ERA5 units, combines variables for windspeed
+        output = converter.om_to_era5(output)
         return output
