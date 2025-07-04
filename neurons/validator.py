@@ -72,6 +72,10 @@ class Validator(BaseValidatorNeuron):
         """
         return await forward(self)
     
+    def prune_hotkeys(self, hotkeys):
+        if self.is_running: # make sure init is finalised
+            self.database.prune_hotkeys(hotkeys)
+    
     def __exit__(self, exc_type, exc_value, traceback):
         super().__exit__(exc_type, exc_value, traceback)
         self.validator_proxy.stop_server()

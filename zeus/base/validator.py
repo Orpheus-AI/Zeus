@@ -75,6 +75,12 @@ class BaseValidatorNeuron(BaseNeuron):
             self.scores[: len(history_scores)] = history_scores
             bt.logging.info("Loaded scores from history.")
 
+        # Instantiate runners
+        self.should_exit: bool = False
+        self.is_running: bool = False
+        self.thread: Union[threading.Thread, None] = None
+        self.lock = asyncio.Lock()
+
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
@@ -86,12 +92,6 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
-
-        # Instantiate runners
-        self.should_exit: bool = False
-        self.is_running: bool = False
-        self.thread: Union[threading.Thread, None] = None
-        self.lock = asyncio.Lock()
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -308,14 +308,16 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:
             return
-
+        
         bt.logging.info(
             "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
         )
         # Zero out all hotkeys that have been replaced.
+        hotkeys_to_prune = []
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
+                hotkeys_to_prune.append(hotkey)
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -328,6 +330,14 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+        self.prune_hotkeys(hotkeys_to_prune)
+
+    @abstractmethod
+    def prune_hotkeys(self, hotkeys: List[str]):
+        """
+        Prune data for hotkeys that got changed for their uid.
+        """
+        pass
 
     def update_scores(self, rewards: np.ndarray, uids: List[int]):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
@@ -374,12 +384,12 @@ class BaseValidatorNeuron(BaseNeuron):
             )
         ]
         scattered_rewards[uids_array] = rewards
-        scattered_rewards[vali_or_nonserve_uids] = 0.
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
         # Update scores with rewards produced by this step.
         alpha: float = self.config.neuron.moving_average_alpha
         self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
+        self.scores[vali_or_nonserve_uids] = 0.
         np.save(self.score_history_path, self.scores)
 
     def save_state(self):

@@ -2,6 +2,7 @@ from typing import List, Callable
 import sqlite3
 import time
 import torch
+import pandas as pd
 import json
 
 from zeus.data.loaders.era5_cds import Era5CDSLoader
@@ -55,12 +56,6 @@ class ResponseDatabase:
                 );
                 """
             )
-            # migrate from v1.0.0 -> v1.1.0
-            if not column_exists(cursor, "challenges", "inserted_at"):
-                cursor.execute("ALTER TABLE challenges ADD COLUMN inserted_at REAL;")
-
-            if not column_exists(cursor, "challenges", "variable"):
-                cursor.execute("ALTER TABLE challenges ADD COLUMN variable TEXT DEFAULT '2m_temperature';")
 
             # miner responses, we will use JSON for the tensor.
             cursor.execute(
@@ -192,12 +187,15 @@ class ResponseDatabase:
             )
             # load the correct output and set it if it is available
             output = self.cds_loader.get_output(sample)
-            if output is None or output.shape[0] != hours_to_predict:
-                continue
             sample.output_data = output
 
+            if output is None or output.shape[0] != hours_to_predict:
+                if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
+                    # challenge is unscore-able, delete it
+                    self._delete_challenge(challenge_uid)
+                continue
+        
             baseline = torch.tensor(json.loads(baseline))
-
             # load the miner predictions
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -216,28 +214,43 @@ class ResponseDatabase:
             
             # don't score while database is open in case there is a metagraph delay.
             score_func(sample, baseline, miner_hotkeys, predictions)
-
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                # prune the challenge and the responses
-                cursor.execute(
-                    """
-                    DELETE FROM challenges WHERE uid = ?;
-                """,
-                    (challenge_uid,),
-                )
-                cursor.execute(
-                    """
-                    DELETE FROM responses WHERE challenge_uid = ?;
-                """,
-                    (challenge_uid,),
-                )
-                conn.commit()
+            self._delete_challenge(challenge_uid)
 
             # don't score miners too quickly in succession and always wait after last scoring
             if i > 0:
                 time.sleep(4)
 
+    def _delete_challenge(self, challenge_uid: int):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            # prune the challenge and the responses
+            cursor.execute(
+                """
+                DELETE FROM challenges WHERE uid = ?;
+            """,
+                (challenge_uid,),
+            )
+            cursor.execute(
+                """
+                DELETE FROM responses WHERE challenge_uid = ?;
+            """,
+                (challenge_uid,),
+            )
+            conn.commit()
+
+    def prune_hotkeys(self, hotkeys: List[str]):
+        """
+        Prune the database of hotkeys that are no longer participating.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                DELETE FROM responses WHERE miner_hotkey IN ({});
+                """.format(','.join('?' for _ in hotkeys)),
+                hotkeys
+            )
+            conn.commit()
 
 
 def column_exists(cursor: sqlite3.Cursor, table_name: str, column_name: str):
