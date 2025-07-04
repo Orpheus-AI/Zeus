@@ -27,6 +27,7 @@ class DifficultyLoader:
                 bt.logging.error(
                     f"Could not parse weight file {weight_file.stem}! This means another month will be used for month {month}."
                 )
+                continue
             month = month.group(1)
             self.difficulty_matrices[int(month)] = weight_matrix
 

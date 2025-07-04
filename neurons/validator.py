@@ -54,10 +54,12 @@ class Validator(BaseValidatorNeuron):
         self.uid_tracker = UIDTracker(self)
         self.validator_proxy = ValidatorProxy(self)
 
+        bt.logging.info("Initialising data loaders...")
         self.cds_loader = Era5CDSLoader()
         self.open_meteo_loader = OpenMeteoLoader()
-        self.database = ResponseDatabase(self.cds_loader)
+        bt.logging.info("Finished setting up data loaders.")
 
+        self.database = ResponseDatabase(self.cds_loader)
         self.difficulty_loader = DifficultyLoader()
         self.init_wandb()
 
