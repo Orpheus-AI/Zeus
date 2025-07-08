@@ -36,7 +36,7 @@ REWARD_IMPROVEMENT_WEIGHT = 0.5 # 50% of emission for improving SOTA
 # RMSE improvement over OpenMeteo only counts if more than this
 REWARD_IMPROVEMENT_MIN_DELTA: Dict[str, float] = {
     "2m_temperature": 0.1, 
-    "total_precipitation": 0.0005
+    "total_precipitation": 0.00001
 }
 
 # ------------------------------------------------------
