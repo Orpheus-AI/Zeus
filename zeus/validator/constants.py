@@ -17,10 +17,10 @@ WANDB_MAX_LOGS = 95_000
 
 # the variables miners are tested on, with their respective sampling weight
 ERA5_DATA_VARS: Dict[str, float] = {
-    "2m_temperature": 0.5, 
-    "total_precipitation": 0.3,
-    "100m_u_component_of_wind": 0.1,
-    "100m_v_component_of_wind": 0.1,
+    "2m_temperature": 0.4,
+    "total_precipitation": 0.5,
+    "100m_u_component_of_wind": 0.05,
+    "100m_v_component_of_wind": 0.05,
 }
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
@@ -38,7 +38,7 @@ REWARD_IMPROVEMENT_WEIGHT = 0.5 # 50% of emission for improving SOTA
 # RMSE improvement over OpenMeteo only counts if more than this
 REWARD_IMPROVEMENT_MIN_DELTA: Dict[str, float] = {
     "2m_temperature": 0.1, 
-    "total_precipitation": 0.0005,
+    "total_precipitation": 0.00001,
     "100m_u_component_of_wind": 0.1,
     "100m_v_component_of_wind": 0.1,
 }
