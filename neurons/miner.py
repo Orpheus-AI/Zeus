@@ -88,13 +88,25 @@ class Miner(BaseMinerNeuron):
         responses = self.openmeteo_api.weather_api(
             "https://api.open-meteo.com/v1/forecast", params=params
         )
-        # get output as grid of [time, lat, lon]
-        output = np.stack(
-            [r.Hourly().Variables(0).ValuesAsNumpy() for r in responses], axis=1
-        ).reshape(-1, coordinates.shape[0], coordinates.shape[1])
-        # OpenMeteo does not use SI units, so convert back
-        output = converter.om_to_era5(output)
 
+        # get output as grid of [time, lat, lon, variables]
+        output = torch.Tensor(np.stack(
+            [
+                np.stack(
+                    [
+                        r.Hourly().Variables(i).ValuesAsNumpy() 
+                        for i in range(r.Hourly().VariablesLength())
+                    ],
+                    axis=-1
+                )
+                for r in responses
+            ],
+            axis=1
+        )).reshape(synapse.requested_hours, *coordinates.shape[:2], -1)
+        # [time, lat, lon] in case of single variable output
+        output = output.squeeze(dim=-1)
+        # Convert variable(s) to ERA5 units, combines variables for windspeed
+        output = converter.om_to_era5(output)
         ##########################################################################################################
         bt.logging.info(f"Output shape is {output.shape}")
 
