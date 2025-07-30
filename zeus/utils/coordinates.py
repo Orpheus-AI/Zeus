@@ -44,7 +44,7 @@ def slice_bbox(
      longitude dimension is assumed to be lat_dim + 1.
     """
 
-    fidelity = matrix.shape[1] // 360
+    fidelity = matrix.shape[lat_dim + 1] // 360
 
     lat_start, lat_end, lon_start, lon_end = bbox
     lat_start_idx = int((90 + lat_start) * fidelity)
