@@ -386,9 +386,22 @@ class BaseValidatorNeuron(BaseNeuron):
         scattered_rewards[uids_array] = rewards
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
+        alpha_min: float = self.config.neuron.moving_average_alpha_min
+        alpha_max: float = self.config.neuron.moving_average_alpha_max
+        immunity: int = self.metagraph.hparams.immunity_period
+
+        # relative miner age, negative is immune
+        miner_ages: np.ndarray = (self.metagraph.block - self.metagraph.block_at_registration) / immunity - 1
+        # set lineary decreasing value everywhere
+        alphas = (1 - miner_ages) * alpha_max + miner_ages * alpha_min
+        # immune miners use maximum moving average alpha
+        alphas[miner_ages < 0] = alpha_max
+        # miners who compete 2+ immunity period can use lowest alpha
+        alphas[miner_ages > 1] =  alpha_min
+        bt.logging.debug(f"Adjusting moving average alphas: {alphas}")
+
         # Update scores with rewards produced by this step.
-        alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
+        self.scores: np.ndarray = alphas * scattered_rewards + (1 - alphas) * self.scores
         self.scores[vali_or_nonserve_uids] = 0.
         np.save(self.score_history_path, self.scores)
 

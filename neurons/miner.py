@@ -86,7 +86,7 @@ class Miner(BaseMinerNeuron):
             "end_hour": end_time.isoformat(timespec="minutes"),
         }
         responses = self.openmeteo_api.weather_api(
-            "https://api.open-meteo.com/v1/forecast", params=params
+            "https://api.open-meteo.com/v1/forecast", params=params, method="POST"
         )
 
         # get output as grid of [time, lat, lon, variables]

@@ -21,6 +21,7 @@ import numpy as np
 import torch
 from zeus.validator.miner_data import MinerData
 from zeus.validator.constants import (
+    MAX_STUPIDITY,
     REWARD_DIFFICULTY_SCALER,  
     REWARD_IMPROVEMENT_WEIGHT,
 )
@@ -113,18 +114,22 @@ def get_curved_scores(raw_scores: List[float], gamma: float) -> List[float]:
     normalise them to 0-1 scores,
     and apply gamma correction to curve accordingly.
 
-    This function assumes lower is better
+    Note that maximal error is capped at MAX_STUPIDITY * minimal_error if applicable,
+    to prevent abuse through distribution shifting.
+
+    This function assumes lower is better!
     """
     min_score = min(raw_scores)
-    max_score = max(raw_scores)
+    max_score = min(max(raw_scores), MAX_STUPIDITY * min_score)
 
     result = []
     for score in raw_scores:
         if max_score == min_score:
             result.append(1.0) # edge case, avoid division by 0
         else:
-            norm_rmse = (max_score - score) / (max_score - min_score)
-            result.append(np.power(norm_rmse, gamma)) # apply gamma correction
+            # min to prevent getting negative score
+            norm_score = (max_score - min(score, max_score)) / (max_score - min_score)
+            result.append(np.power(norm_score, gamma)) # apply gamma correction
     
     return result
     

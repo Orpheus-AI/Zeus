@@ -18,7 +18,11 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from timezonefinder import TimezoneFinder
 
 from zeus.validator.constants import (
-    LIVE_START_OFFSET_RANGE, ERA5_AREA_SAMPLE_RANGE, PROXY_QUERY_K, ERA5_DATA_VARS
+    LIVE_START_OFFSET_RANGE,
+    ERA5_AREA_SAMPLE_RANGE, 
+    PROXY_QUERY_K, 
+    PROXY_CUTOFF_PERCENT,
+    ERA5_DATA_VARS,
 )
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.validator.reward import help_format_miner_output, get_shape_penalty
@@ -27,7 +31,7 @@ from zeus.utils.time import get_today, get_hours, safe_tz_convert
 from zeus.utils.coordinates import get_grid, expand_to_grid, interp_coordinates
 from zeus.data.converter import get_converter, VariableConverter
 
-from zeus.api.eager_dendrite import EagerDendrite
+from zeus.api.dendrite import MoEDendrite
 
 class ValidatorProxy:
     def __init__(
@@ -42,17 +46,17 @@ class ValidatorProxy:
 
         self.timezone_finder = TimezoneFinder()
         self.validator = validator
-        self.dendrite = EagerDendrite(wallet=validator.wallet)
+        self.dendrite = MoEDendrite(wallet=validator.wallet, cutoff_percent=PROXY_CUTOFF_PERCENT)
         self.app = FastAPI()
         self.app.add_api_route(
-            "/predictGridTemperature",
-            self.predict_grid_temperature,
+            "/predictGrid",
+            self.predict_grid,
             methods=["POST"],
             dependencies=[Depends(self.get_self)],
         )
         self.app.add_api_route(
-            "/predictPointTemperature",
-            self.predict_point_temperature,
+            "/predictPoint",
+            self.predict_point,
             methods=["POST"],
             dependencies=[Depends(self.get_self)],
         )
@@ -103,7 +107,16 @@ class ValidatorProxy:
             )
         return miner_uids
 
-    async def predict_grid_temperature(self, request: Request):
+    def weighted_average(self, responses: List[Tuple[int, torch.Tensor]]) -> torch.Tensor:
+        if not responses:
+            bt.logging.info(f"[PROXY] Received no valid responses from miners")
+            raise HTTPException(status_code=500, detail="No valid response received from miners")
+        
+        ranked_uids, tensors = zip(*responses)
+        # torch lacks this function unfortunately
+        return torch.Tensor(np.average([t.numpy() for t in tensors], weights=ranked_uids, axis=0))
+
+    async def predict_grid(self, request: Request):
         self.authorize_token(request.headers)
         bt.logging.info("[PROXY] Received an organic request!")
 
@@ -133,7 +146,7 @@ class ValidatorProxy:
                 requested_hours=predict_hours,
             )
 
-        except Exception as e:
+        except Exception:
             bt.logging.info(f"[PROXY] Organic request was invalid.")
             raise HTTPException(
                 status_code=400,
@@ -142,21 +155,17 @@ class ValidatorProxy:
 
         # getting responses EAGERLY
         miner_uids = self.get_proxy_uids()
-        prediction = await self.dendrite(
-            axons=[self.validator.metagraph.axons[uid] for uid in miner_uids],
+        prediction = self.weighted_average(await self.dendrite(
+            uids=miner_uids,
+            metagraph=self.validator.metagraph,
             synapse=synapse,
-            deserialize=True,
             timeout=10,
             filter=partial(
                 is_valid_synapse, 
                 correct_shape=(predict_hours, grid.shape[0], grid.shape[1])
             )
-        )
+        ))
         self.validator.uid_tracker.mark_finished(miner_uids)
-
-        if prediction is None:
-            bt.logging.info(f"[PROXY] Received no valid responses from miners")
-            return HTTPException(status_code=500, detail="No valid response received from miners")
         
         bt.logging.info(f"[PROXY] Obtained a valid eager prediction.")
         return self.format_response(
@@ -169,7 +178,7 @@ class ValidatorProxy:
         )
 
 
-    async def predict_point_temperature(self, request: Request):
+    async def predict_point(self, request: Request):
         self.authorize_token(request.headers)
         bt.logging.info("[PROXY] Received an organic request!")
 
@@ -201,24 +210,19 @@ class ValidatorProxy:
                 detail=f"Invalid request, parsing failed with error:\n {traceback.format_exc()}",
             )
 
-        # getting responses EAGERLY
+        # getting responses
         miner_uids = self.get_proxy_uids()
-        prediction = await self.dendrite(
-            axons=[self.validator.metagraph.axons[uid] for uid in miner_uids],
+        prediction = self.weighted_average(await self.dendrite(
+            uids=miner_uids,
+            metagraph=self.validator.metagraph,
             synapse=synapse,
-            deserialize=True,
             timeout=10,
             filter=partial(
                 is_valid_synapse, 
                 correct_shape=(predict_hours, grid.shape[0], grid.shape[1])
             )
-        )
+        ))
         self.validator.uid_tracker.mark_finished(miner_uids)
-
-        if prediction is None:
-            bt.logging.info(f"[PROXY] Received no valid responses from miners")
-            return HTTPException(status_code=500, detail="No valid response received")
-        
         bt.logging.info(f"[PROXY] Obtained a valid eager prediction.")
 
         prediction = interp_coordinates(prediction, grid, lat, lon)

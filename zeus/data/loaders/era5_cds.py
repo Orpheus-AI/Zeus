@@ -69,14 +69,27 @@ class Era5CDSLoader(Era5BaseLoader):
         if not self.updater_running:
             bt.logging.info("ERA5 cache is not up to date, starting updater...")
             self.updater_running = True
+            asyncio.get_event_loop() # force loop availability
             asyncio.create_task(self.update_cache())
         return False
 
     def load_dataset(self) -> Optional[xr.Dataset]:
-        era5_files = self.cache_dir.rglob("*/*.nc")
-        datasets = [xr.open_dataset(fname, engine="netcdf4") for fname in era5_files]
+        datasets = []
+        broken_file = False
+        for fname in self.cache_dir.rglob("*/*.nc"):
+            try:
+                datasets.append(xr.open_dataset(fname, engine="netcdf4"))
+            except:
+                broken_file = True
+                fname.unlink(missing_ok=True) # delete broken files so they can be re-downloaded
+
+        if broken_file:
+            bt.logging.warning("Found one or multiple broken .nc files! They will now be redownloaded...")
+            self.is_ready() # force re-download
+            return
+        
         if not datasets:
-            return None
+            return
 
         dataset = xr.merge(datasets)
         dataset = dataset.sortby("valid_time")

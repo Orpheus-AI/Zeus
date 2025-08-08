@@ -38,7 +38,7 @@ class OpenMeteoLoader:
         }
 
         responses = self.open_meteo_api.weather_api(
-            self.open_meteo_url, params=params
+            self.open_meteo_url, params=params, method="POST"
         )
 
         # get output as grid of [time, lat, lon, variables]

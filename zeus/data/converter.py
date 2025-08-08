@@ -54,7 +54,7 @@ class WindConverter(VariableConverter, ABC):
         raise NotImplementedError
 
     @check_shapes(
-        "data: [batch..., 4]",
+        "data: [batch..., n]",
         "return: [batch...]",
     )
     def om_to_era5(self, data: Union[np.ndarray, torch.Tensor], trigeometry: Callable) -> Union[np.ndarray, torch.Tensor]:
