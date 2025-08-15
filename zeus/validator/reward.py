@@ -108,7 +108,11 @@ def set_penalties(
     return miners_data
 
 
-def get_curved_scores(raw_scores: List[float], gamma: float) -> List[float]:
+def get_curved_scores(
+        raw_scores: List[float], 
+        gamma: float, 
+        cap_max: bool = True
+) -> List[float]:
     """
     Given a list of raw float scores (can by any range),
     normalise them to 0-1 scores,
@@ -120,7 +124,9 @@ def get_curved_scores(raw_scores: List[float], gamma: float) -> List[float]:
     This function assumes lower is better!
     """
     min_score = min(raw_scores)
-    max_score = min(max(raw_scores), MAX_STUPIDITY * min_score)
+    max_score = max(raw_scores)
+    if cap_max:
+        max_score = min(max_score, MAX_STUPIDITY * min_score)
 
     result = []
     for score in raw_scores:
@@ -175,9 +181,9 @@ def set_rewards(
         improvement = baseline_rmse - miner_data.rmse - min_sota_delta
         miner_data.baseline_improvement = max(0, improvement)
 
-    quality_scores = get_curved_scores([m.rmse for m in miners_data], gamma)
+    quality_scores = get_curved_scores([m.rmse for m in miners_data], gamma, cap_max=True)
     # negative since curving assumes minimal is the best
-    improvement_scores = get_curved_scores([-m.baseline_improvement for m in miners_data], gamma)
+    improvement_scores = get_curved_scores([-m.baseline_improvement for m in miners_data], gamma, cap_max=False)
 
     for miner_data, quality, improvement in zip(miners_data, quality_scores, improvement_scores):
         miner_data.reward = (1 - REWARD_IMPROVEMENT_WEIGHT) * quality + REWARD_IMPROVEMENT_WEIGHT * improvement
