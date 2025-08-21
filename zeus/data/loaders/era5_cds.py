@@ -91,7 +91,7 @@ class Era5CDSLoader(Era5BaseLoader):
         if not datasets:
             return
 
-        dataset = xr.merge(datasets)
+        dataset = xr.merge(datasets, join='outer', compat='no_conflicts')
         dataset = dataset.sortby("valid_time")
         self.last_stored_timestamp = pd.Timestamp(dataset.valid_time.max().values)
         return dataset
