@@ -218,7 +218,7 @@ class ResponseDatabase:
 
             # don't score miners too quickly in succession and always wait after last scoring
             if i > 0:
-                time.sleep(4)
+                time.sleep(2)
 
     def _delete_challenge(self, challenge_uid: int):
         with sqlite3.connect(self.db_path) as conn:

@@ -16,8 +16,6 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-
-
 import os
 import copy
 import sys
@@ -31,6 +29,7 @@ from abc import abstractmethod
 from typing import List, Union
 from traceback import format_exception
 
+from zeus.base.dendrite import ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.utils.uids import check_uid_availability
 from zeus.base.utils.weight_utils import (
@@ -59,8 +58,11 @@ class BaseValidatorNeuron(BaseNeuron):
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
+        # Create asyncio event loop to manage async tasks.
+        self.loop = asyncio.get_event_loop()
+
         # Dendrite lets us send messages to other nodes (axons) in the network.
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.dendrite = ZeusDendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
@@ -89,9 +91,6 @@ class BaseValidatorNeuron(BaseNeuron):
             self.serve_axon()
         else:
             bt.logging.warning("axon off, not serving ip to chain.")
-
-        # Create asyncio event loop to manage async tasks.
-        self.loop = asyncio.get_event_loop()
 
     def serve_axon(self):
         """Serve axon to enable external connections."""

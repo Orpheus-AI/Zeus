@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # check if sudo exists as it doesn't on RunPod
-if command -v sudo 2>&1 >/dev/null
-then
+if command -v sudo 2>&1 >/dev/null; then
     PREFIX="sudo"
 else
     PREFIX=""
@@ -16,6 +15,19 @@ $PREFIX apt install -y \
     npm
 
 $PREFIX npm install -g pm2@6.0.5
+
+# Make sure TCP processes have sufficient memory
+# Doesn't work on Docker, so check if modifyable first
+if [ ! -f /.dockerenv ]; then
+    TCP_SETTINGS="
+    # Custom Zeus TCP buffer settings for high-concurrency workloads
+    net.ipv4.tcp_rmem=4096 131072 13107200
+    net.ipv4.tcp_wmem=4096 16384 13107200
+    "
+    echo "$TCP_SETTINGS" | $PREFIX tee /etc/sysctl.d/99-zeus-subnet-tcp.conf > /dev/null
+    $PREFIX sysctl --system
+    echo "Increased TCP memory settings for optimal concurrency!"
+fi
 
 # install repository itself
 pip install -e . --use-pep517
