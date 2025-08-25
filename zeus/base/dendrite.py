@@ -1,6 +1,5 @@
 from typing import Union, Any, AsyncGenerator, Dict, Tuple, List, Awaitable, TypeVar
 T = TypeVar("T")
-from functools import partial
 import time
 import asyncio
 
@@ -21,12 +20,12 @@ class ZeusDendrite(bt.Dendrite):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # just do this initially not when requesting
+        # just do this once initially
         connector = aiohttp.TCPConnector(
             limit=200, 
             verify_ssl=False, 
             loop=asyncio.get_event_loop(),
-            limit_per_host=100,
+            limit_per_host=125,
             )
         self._session = aiohttp.ClientSession(connector=connector)
 
@@ -41,7 +40,7 @@ class ZeusDendrite(bt.Dendrite):
         """
         Modified forward call to decompose request creation and sending,
         So that request timing is only applied to the later part.
-        NOTE: does not support stream for now.
+        NOTE: does not support streaming for now as unused.
         """
         is_list = True
         # If a single axon is provided, wrap it in a list for uniform processing
@@ -55,20 +54,16 @@ class ZeusDendrite(bt.Dendrite):
             as per the parent class.
             """
 
-            async def sync_gather(calls: List[Awaitable[T]]) -> List[T]:
+            async def sync_gather(*calls: List[Awaitable[T]]) -> List[T]:
                 """Wrapper to handle any async inputs collection synchronously"""
                 return [await call for call in calls]
             
-            async def async_gather(calls: List[Awaitable[T]]) -> List[T]:
-                """Wrapper to handle any async inputs collection asynchronously"""
-                return await asyncio.gather(*calls)
-            
             # whether to process calls in parallel or synchronously
-            gather_func = async_gather if run_async else sync_gather
+            gather_func = asyncio.gather if run_async else sync_gather
             
             # First get all modified synapses and arguments to the post-calls
             calls = await gather_func(
-                [
+                *[
                     self.prepare_call(
                         target_axon=target_axon,
                         synapse=synapse.model_copy(),
@@ -80,7 +75,7 @@ class ZeusDendrite(bt.Dendrite):
 
             # actually execute the calls, internal timing starts here
             return await gather_func(
-                [
+                *[
                     self.call(post_args=post_args, synapse=synapse, deserialize=deserialize) 
                     for (synapse, post_args) in calls
                 ]
@@ -100,6 +95,10 @@ class ZeusDendrite(bt.Dendrite):
         """
         First half of default BitTensor dendrite.call function.
         Modifies the synapse in place, and returns all precomputed arguments for post request
+
+        Returns:
+        - Synapyse: modified in place to include hotkey signing
+        - Post request arguments: A dict representing all precomputed HTTP post arguments
         """
         target_axon = (
             target_axon.info() if isinstance(target_axon, bt.Axon) else target_axon
@@ -131,6 +130,9 @@ class ZeusDendrite(bt.Dendrite):
         """
         Second half of default BitTensor dendrite.call function.
         Sends to actual request and handles its output, timing accordingly.
+
+        Returns:
+        - Synapse or deserialisation result
         """
 
         # Record start time
