@@ -72,33 +72,26 @@ class Era5CDSLoader(Era5BaseLoader):
             asyncio.get_event_loop() # force loop availability
             asyncio.create_task(self.update_cache())
         return False
-    
-    def delete_broken_files(self, files: List[Path]):
-        broken_file = False
-        for path in files:
-            try:
-                with xr.open_dataset(path, engine="netcdf4"):
-                    pass # see if file is not broken
-            except:
-                broken_file = True
-                path.unlink(missing_ok=True)
-        return broken_file
 
     def load_dataset(self) -> Optional[xr.Dataset]:
-        files = [f for f in self.cache_dir.rglob("*/*.nc")]
+        datasets = []
+        broken_file = False
+        for fname in self.cache_dir.rglob("*/*.nc"):
+            try:
+                datasets.append(xr.open_dataset(fname, engine="netcdf4"))
+            except:
+                broken_file = True
+                fname.unlink(missing_ok=True) # delete broken files so they can be re-downloaded
 
-        if self.delete_broken_files(files=files):
+        if broken_file:
             bt.logging.warning("Found one or multiple broken .nc files! They will now be redownloaded...")
             self.is_ready() # force re-download
             return
+        
+        if not datasets:
+            return
 
-        dataset = xr.open_mfdataset(
-            files, 
-            combine="by_coords", 
-            engine='netcdf4',
-            compat="no_conflicts",
-        )
-
+        dataset = xr.merge(datasets)
         dataset = dataset.sortby("valid_time")
         self.last_stored_timestamp = pd.Timestamp(dataset.valid_time.max().values)
         return dataset
