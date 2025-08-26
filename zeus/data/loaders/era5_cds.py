@@ -98,6 +98,9 @@ class Era5CDSLoader(Era5BaseLoader):
             self.last_stored_timestamp = pd.Timestamp(0) # reset so if it fails will trigger re-download
             return
         
+        if not files:
+            return
+        
         dataset = xr.open_mfdataset(
             files, 
             combine="by_coords", 
