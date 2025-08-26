@@ -125,11 +125,10 @@ class Era5BaseLoader(ABC):
         else:
             subset = subset.sel(time=slice(start_time, end_time))
 
-        subset = subset.compute()  # heavy loading - fetch the actual data here.
-
         y_grid = torch.stack(
             [
-                torch.as_tensor(subset[var].data, dtype=torch.float)
+                # only use to_numpy - which computes data - for relevant variable(s)
+                torch.as_tensor(subset[var].to_numpy(), dtype=torch.float)
                 for var in shortcodes
             ],
             dim=-1,
@@ -138,7 +137,7 @@ class Era5BaseLoader(ABC):
         x_grid = torch.stack(
             torch.meshgrid(
                 *[
-                    torch.as_tensor(subset[v].data, dtype=torch.float)
+                    torch.as_tensor(subset[v].to_numpy(), dtype=torch.float)
                     for v in ("latitude", "longitude")
                 ],
                 indexing="ij",

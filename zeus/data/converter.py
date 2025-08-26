@@ -87,7 +87,7 @@ class NorthWindConverter(WindConverter):
 
     def om_to_era5(self, data: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         return super().om_to_era5(data, trigeometry=np.cos)
-     
+         
 
 REGISTRY = {converter.data_var: converter for converter in [
         TemperatureConverter("2m_temperature", om_name="temperature_2m", short_code="t2m", unit="K"), 
@@ -103,7 +103,8 @@ REGISTRY = {converter.data_var: converter for converter in [
             om_name=["wind_speed_80m", "wind_direction_80m", "wind_speed_120m", "wind_direction_120m"],
             short_code="v100",
             unit="m/s",
-        )
+        ),
+        TemperatureConverter("2m_dewpoint_temperature", om_name="dew_point_2m", short_code="d2m", unit="K")
 ]}
 
 def get_converter(data_var: str) -> VariableConverter:
