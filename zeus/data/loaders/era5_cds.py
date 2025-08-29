@@ -5,6 +5,7 @@ from requests.exceptions import HTTPError
 import os
 import asyncio
 import math
+from traceback import format_exception
 
 import numpy as np
 import torch
@@ -56,14 +57,17 @@ class Era5CDSLoader(Era5BaseLoader):
 
         super().__init__(predict_sample_range=LIVE_HOURS_PREDICT_RANGE, **kwargs)
 
+    def _get_era5_cutoff(self) -> pd.Timestamp:
+        return get_today("h") - pd.Timedelta(days=self.ERA5_DELAY_DAYS)
+
     def is_ready(self) -> bool:
         """
         Returns whether the cache is up to date, and we can therefore sample safely.
 
         If not, it will start an async updating process (if it hasn't already started).
         """
-        cut_off = get_today("h") - pd.Timedelta(days=self.ERA5_DELAY_DAYS)
-        if self.last_stored_timestamp >= cut_off:
+        cut_off = self._get_era5_cutoff()
+        if self.last_stored_timestamp >= cut_off and len(self.data_vars) == len(self.dataset.data_vars):
             return True
 
         if not self.updater_running:
@@ -72,28 +76,40 @@ class Era5CDSLoader(Era5BaseLoader):
             asyncio.get_event_loop() # force loop availability
             asyncio.create_task(self.update_cache())
         return False
-
-    def load_dataset(self) -> Optional[xr.Dataset]:
-        datasets = []
+    
+    def delete_broken_files(self, files: List[Path]):
         broken_file = False
-        for fname in self.cache_dir.rglob("*/*.nc"):
+        for path in files:
             try:
-                datasets.append(xr.open_dataset(fname, engine="netcdf4"))
+                with xr.open_dataset(path, engine="h5netcdf") as data:
+                    # if not last file, assure no missing hours
+                    if pd.Timestamp(data.valid_time.max().values).day != self._get_era5_cutoff().day:
+                        assert len(data.valid_time) == 24
             except:
                 broken_file = True
-                fname.unlink(missing_ok=True) # delete broken files so they can be re-downloaded
+                path.unlink(missing_ok=True)
+        return broken_file
 
-        if broken_file:
+    def load_dataset(self) -> Optional[xr.Dataset]:
+        files = [f for f in self.cache_dir.rglob("*/*.nc")]
+
+        if self.delete_broken_files(files=files):
             bt.logging.warning("Found one or multiple broken .nc files! They will now be redownloaded...")
-            self.is_ready() # force re-download
+            self.last_stored_timestamp = pd.Timestamp(0) # reset so if it fails will trigger re-download
             return
         
-        if not datasets:
+        if not files:
             return
+        
+        dataset = xr.open_mfdataset(
+            files, 
+            combine="by_coords", 
+            engine='h5netcdf',
+            compat="no_conflicts",
+        )
 
-        dataset = xr.merge(datasets)
         dataset = dataset.sortby("valid_time")
-        self.last_stored_timestamp = pd.Timestamp(dataset.valid_time.max().values)
+        self.last_stored_timestamp = pd.Timestamp(dataset.valid_time.max().values)            
         return dataset
 
     def sample_time_range(self) -> Tuple[pd.Timestamp, pd.Timestamp, int]:
@@ -234,17 +250,18 @@ class Era5CDSLoader(Era5BaseLoader):
                 if not os.path.isfile(filename) or days_ago == self.ERA5_DELAY_DAYS:
                     tasks.append(asyncio.to_thread(self.download_era5_day, variable, timestamp))
 
-        await asyncio.gather(*tasks)
-        self.dataset = self.preprocess_dataset(self.load_dataset())
+        try:
+            await asyncio.gather(*tasks)
+            self.dataset = self.preprocess_dataset(self.load_dataset())
+            assert self.is_ready()
+            bt.logging.info("Successfully updated cache -- ready to send challenges!")
 
-        if not self.is_ready():
-            bt.logging.error(
-                "ERROR: ERA5 current cache update failed! This means we cannot send live challenges to miners. If this keeps occuring, please contact us on Discord."
-            )
+            # remove any old cache.
+            for file in self.cache_dir.rglob("*.nc"):
+                if str(file) not in expected_files:
+                    file.unlink(missing_ok=True)
 
-        # remove any old cache.
-        for file in self.cache_dir.rglob("*.nc"):
-            if str(file) not in expected_files:
-                os.remove(file)
-
-        self.updater_running = False
+        except Exception as err:
+            bt.logging.error(f"ERA5 cache update failed! {''.join(format_exception(type(err), err, err.__traceback__))}")
+        finally:
+            self.updater_running = False

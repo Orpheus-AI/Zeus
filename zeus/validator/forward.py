@@ -124,7 +124,7 @@ async def forward(self: BaseValidatorNeuron):
 
 
 def parse_miner_inputs(
-    self,
+    self: BaseValidatorNeuron,
     sample: Era5Sample,
     hotkeys: List[str],
     responses: List[torch.Tensor],
@@ -150,7 +150,7 @@ def parse_miner_inputs(
 
 
 def complete_challenge(
-    self,
+    self: BaseValidatorNeuron,
     sample: Era5Sample,
     baseline: Optional[torch.Tensor],
     hotkeys: List[str],
