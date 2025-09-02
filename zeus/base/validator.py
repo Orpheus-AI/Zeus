@@ -249,10 +249,6 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check if the norm is zero or contains NaN values
         if np.any(norm == 0) or np.isnan(norm).any():
             norm = np.ones_like(norm)  # Avoid division by zero or NaN
-
-        # Set UID 56 to 1.0 and all others to 0
-        self.scores = np.zeros_like(self.scores)
-        if 56 in self.metagraph.uids: self.scores[self.metagraph.uids == 56] = 1.0
         
         # Compute raw_weights safely
         raw_weights = self.scores / norm
