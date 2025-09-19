@@ -29,8 +29,8 @@ if [ ! -f /.dockerenv ]; then
     echo "Increased TCP memory settings for optimal concurrency!"
 fi
 
-# install repository itself
-pip install -e . --use-pep517
+# install repository itself and CPU only torch
+pip install --extra-index-url https://download.pytorch.org/whl/cpu -e . --use-pep517
 
 # Create miner.env if it doesn't exist
 if [ -f "miner.env" ]; then

@@ -8,6 +8,7 @@ import json
 from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.validator.constants import DATABASE_LOCATION
 from zeus.data.sample import Era5Sample
+from zeus.validator.miner_data import MinerData
 
 
 class ResponseDatabase:
@@ -64,23 +65,27 @@ class ResponseDatabase:
                     miner_hotkey TEXT,
                     challenge_uid INTEGER,
                     prediction TEXT,
+                    response_time REAL DEFAULT 5.0,
                     FOREIGN KEY (challenge_uid) REFERENCES challenges (uid)
                 );
                 """
             )
+            # migrate from v1.3.0 -> v1.4.0
+            if not column_exists(cursor, "responses", "response_time"):
+                cursor.execute("ALTER TABLE responses ADD COLUMN response_time REAL DEFAULT 5.0;")
+
             conn.commit()
 
     def insert(
         self,
         sample: Era5Sample,
-        miner_hotkeys: List[str],
-        predictions: List[torch.Tensor],
+        miners_data: List[MinerData],
     ):
         """
         Insert a challenge and responses into the database.
         """
         challenge_uid = self._insert_challenge(sample)
-        self._insert_responses(challenge_uid, miner_hotkeys, predictions)
+        self._insert_responses(challenge_uid, miners_data)
 
     def _insert_challenge(self, sample: Era5Sample) -> int:
         """
@@ -111,8 +116,7 @@ class ResponseDatabase:
     def _insert_responses(
         self,
         challenge_uid: int,
-        miner_hotkeys: List[str],
-        predictions: List[torch.Tensor],
+        miners_data: List[MinerData],
     ):
         """
         Insert the responses from the miners into the database.
@@ -122,22 +126,21 @@ class ResponseDatabase:
 
             data_to_insert = []
             # prepare data for insertion
-            for miner_hotkey, prediction in zip(miner_hotkeys, predictions):
-                prediction_json = json.dumps(prediction.tolist())
-
-                data_to_insert.append((miner_hotkey, challenge_uid, prediction_json))
+            for miner in miners_data:
+                prediction_json = json.dumps(miner.prediction.tolist())
+                data_to_insert.append((miner.hotkey, challenge_uid, prediction_json, miner.response_time))
 
             cursor.executemany(
                 """
-                INSERT INTO responses (miner_hotkey, challenge_uid, prediction)
-                VALUES (?, ?, ?);
-            """,
+                INSERT INTO responses (miner_hotkey, challenge_uid, prediction, response_time)
+                VALUES (?, ?, ?, ?);
+                """,
                 data_to_insert,
             )
             conn.commit()
 
     def score_and_prune(
-        self, score_func: Callable[[Era5Sample, torch.Tensor, List[str], List[torch.Tensor]], None]
+        self, score_func: Callable[[Era5Sample, torch.Tensor, List[str], List[torch.Tensor], List[float]], None]
     ):
         """
         Check the database for challenges and responses, and prune them if they are not needed anymore.
@@ -207,13 +210,12 @@ class ResponseDatabase:
                 )
                 responses = cursor.fetchall()
 
-                miner_hotkeys = [response[0] for response in responses]
-                predictions = [
-                    torch.tensor(json.loads(response[2])) for response in responses
-                ]
+                miner_hotkeys = [r[0] for r in responses]
+                predictions = [torch.tensor(json.loads(r[2])) for r in responses]
+                response_times = [r[3] for r in responses]
             
             # don't score while database is open in case there is a metagraph delay.
-            score_func(sample, baseline, miner_hotkeys, predictions)
+            score_func(sample, baseline, miner_hotkeys, predictions, response_times)
             self._delete_challenge(challenge_uid)
 
             # don't score miners too quickly in succession and always wait after last scoring

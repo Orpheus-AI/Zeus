@@ -28,6 +28,7 @@ class ZeusDendrite(bt.Dendrite):
             limit_per_host=125,
             )
         self._session = aiohttp.ClientSession(connector=connector)
+        self.semaphore = asyncio.Semaphore(10)
 
     async def forward(
         self,
@@ -134,32 +135,32 @@ class ZeusDendrite(bt.Dendrite):
         Returns:
         - Synapse or deserialisation result
         """
+        async with self.semaphore:
+            # Record start time
+            start_time = time.time()
 
-        # Record start time
-        start_time = time.time()
+            try:
+                # Log outgoing request
+                self._log_outgoing_request(synapse)
 
-        try:
-            # Log outgoing request
-            self._log_outgoing_request(synapse)
+                # Make the HTTP POST request
+                async with (await self.session).post(**post_args) as response:
+                    # Extract the JSON response from the server
+                    json_response = await response.json()
+                    # Process the server response and fill synapse
+                    self.process_server_response(response, json_response, synapse)
 
-            # Make the HTTP POST request
-            async with (await self.session).post(**post_args) as response:
-                # Extract the JSON response from the server
-                json_response = await response.json()
-                # Process the server response and fill synapse
-                self.process_server_response(response, json_response, synapse)
+                # Set process time and log the response
+                synapse.dendrite.process_time = str(time.time() - start_time)  # type: ignore
 
-            # Set process time and log the response
-            synapse.dendrite.process_time = str(time.time() - start_time)  # type: ignore
+            except Exception as e:
+                synapse = self.process_error_message(synapse, synapse.__class__.__name__, e)
 
-        except Exception as e:
-            synapse = self.process_error_message(synapse, synapse.__class__.__name__, e)
+            finally:
+                self._log_incoming_response(synapse)
 
-        finally:
-            self._log_incoming_response(synapse)
+                # Log synapse event history
+                self.synapse_history.append(bt.Synapse.from_headers(synapse.to_headers()))
 
-            # Log synapse event history
-            self.synapse_history.append(bt.Synapse.from_headers(synapse.to_headers()))
-
-            # Return the updated synapse object after deserializing if requested
-            return synapse.deserialize() if deserialize else synapse
+                # Return the updated synapse object after deserializing if requested
+                return synapse.deserialize() if deserialize else synapse

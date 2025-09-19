@@ -17,7 +17,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from functools import partial
 import time
 import bittensor as bt
@@ -34,7 +34,8 @@ from zeus.validator.reward import set_rewards, set_penalties, rmse
 from zeus.validator.miner_data import MinerData
 from zeus.utils.logging import maybe_reset_wandb
 from zeus.base.validator import BaseValidatorNeuron
-from zeus.validator.constants import FORWARD_DELAY_SECONDS, REWARD_IMPROVEMENT_MIN_DELTA
+from zeus.protocol import TimePredictionSynapse
+from zeus.validator.constants import FORWARD_DELAY_SECONDS
 
 
 async def forward(self: BaseValidatorNeuron):
@@ -79,20 +80,24 @@ async def forward(self: BaseValidatorNeuron):
     )
 
     axons = [self.metagraph.axons[uid] for uid in miner_uids]
-    miner_hotkeys: List[str] = list([axon.hotkey for axon in axons])
-
     bt.logging.info(f"Querying {len(miner_uids)} miners..")
-    start_request = time.time()
-    responses = await self.dendrite(
+    responses: List[TimePredictionSynapse] = await self.dendrite(
         axons=axons,
         synapse=sample.get_synapse(),
-        deserialize=True,
+        deserialize=False,
         timeout=self.config.neuron.timeout,
     )
 
-    bt.logging.success(f"Responses received in {time.time() - start_request}s")
+    resp_times = [float(r.dendrite.process_time) for r in responses if r.dendrite.process_time]
+    bt.logging.success(f"Received {len(resp_times)} responses with average response time of {np.mean(resp_times):.2f}s")
 
-    miners_data = parse_miner_inputs(self, sample, miner_hotkeys, responses)
+    miners_data = parse_miner_inputs(
+        self, 
+        sample=sample, 
+        hotkeys=[axon.hotkey for axon in axons], 
+        predictions=[r.deserialize() for r in responses],
+        response_times=[r.dendrite.process_time for r in responses]    
+    )
     # Identify miners who should receive a penalty
     good_miners, bad_miners = split_list(miners_data, lambda m: not m.shape_penalty)
 
@@ -100,7 +105,7 @@ async def forward(self: BaseValidatorNeuron):
     if len(bad_miners) > 0:
         uids = [miner.uid for miner in bad_miners]
         self.uid_tracker.mark_finished(uids, good=False)
-        bt.logging.success(f"Punishing miners that did not respond: {uids}")
+        bt.logging.success(f"Punishing miners that got a penalty: {uids}")
         self.update_scores(
             [miner.reward for miner in bad_miners],
             uids,
@@ -111,11 +116,9 @@ async def forward(self: BaseValidatorNeuron):
         uids = [m.uid for m in good_miners]
         # store non-penalty miners for proxy
         self.uid_tracker.mark_finished(uids, good=True)
-        hotkeys = [miner.hotkey for miner in good_miners]
-        predictions = [miner.prediction for miner in good_miners]
       
         bt.logging.success(f"Storing challenge and sensible miner responses in SQLite database: {uids}")
-        self.database.insert(sample, hotkeys, predictions)
+        self.database.insert(sample, miners_data=good_miners)
 
     # prevent W&B logs from becoming massive
     maybe_reset_wandb(self)
@@ -127,7 +130,8 @@ def parse_miner_inputs(
     self: BaseValidatorNeuron,
     sample: Era5Sample,
     hotkeys: List[str],
-    responses: List[torch.Tensor],
+    predictions: List[torch.Tensor],
+    response_times: List[Optional[Union[str, float]]]
 ) -> List[MinerData]:
     """
     Convert input to MinerData and calculate (and populate) their penalty fields.
@@ -137,10 +141,17 @@ def parse_miner_inputs(
 
     # Make miner data for each miner that is still alive
     miners_data = []
-    for hotkey, prediction in zip(hotkeys, responses):
+    for hotkey, prediction, response_time in zip(hotkeys, predictions, response_times):
         uid = lookup.get(hotkey, None)
         if uid is not None:
-            miners_data.append(MinerData(uid=uid, hotkey=hotkey, prediction=prediction))
+            miners_data.append(
+                MinerData(
+                    uid=uid, 
+                    hotkey=hotkey, 
+                    response_time=float(response_time or self.config.neuron.timeout), 
+                    prediction=prediction
+                )
+            )
 
     # pre-calculate penalities since we need those to filter
     return set_penalties(
@@ -155,19 +166,19 @@ def complete_challenge(
     baseline: Optional[torch.Tensor],
     hotkeys: List[str],
     predictions: List[torch.Tensor],
+    response_times: List[float]
 ) -> Optional[List[MinerData]]:
     """
     Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
     Note that non-responding miners (which get a penalty) have already been excluded.
     """
     
-    miners_data = parse_miner_inputs(self, sample, hotkeys, predictions)
+    miners_data = parse_miner_inputs(self, sample, hotkeys, predictions, response_times)
     miners_data = set_rewards(
         output_data=sample.output_data, 
         miners_data=miners_data, 
         baseline_data=baseline,
         difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
-        min_sota_delta=REWARD_IMPROVEMENT_MIN_DELTA[sample.variable]
     )
 
     self.update_scores(

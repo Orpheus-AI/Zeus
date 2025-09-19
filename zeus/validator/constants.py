@@ -35,20 +35,15 @@ ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
 # ------------------------------------------------------
 # 1.0 would imply no difficulty scaling, should be >= 1.
 REWARD_DIFFICULTY_SCALER = 3.0
-# 50% of emission for improving SOTA
-REWARD_IMPROVEMENT_WEIGHT = 0.5
-# when curving scores, worst score is capped at MAX_STUPIDITY * best_score if applicable
+# 70% of emission for quality, 30% for speed
+REWARD_RMSE_WEIGHT = 0.7
+REWARD_EFFICIENCY_WEIGHT = 0.3
+# score is percentage worse/better than OpenMeteo baseline. Capped between these percentages (as float)
+MIN_RELATIVE_SCORE = -1.0
+MAX_RELATIVE_SCORE = 0.8
+# when curving scores, below (1 - cap) * median_speed = 1 and above (1 + cap) * median_speed = 0
 # to prevent reward curve from being shifted by really bad outlier
-MAX_STUPIDITY = 3.0
-
-# RMSE improvement over OpenMeteo only counts if more than this
-REWARD_IMPROVEMENT_MIN_DELTA: Dict[str, float] = {
-    "2m_temperature": 0.1, 
-    "total_precipitation": 0.00001,
-    "100m_u_component_of_wind": 0.1,
-    "100m_v_component_of_wind": 0.1,
-    "2m_dewpoint_temperature": 0.1,
-}
+CAP_FACTOR_EFFICIENCY = 0.8
 
 # ------------------------------------------------------
 # --------------- Current/Future prediction-------------

@@ -16,14 +16,17 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-from typing import List, Optional
+from typing import List, Optional, Union
 import numpy as np
 import torch
 from zeus.validator.miner_data import MinerData
 from zeus.validator.constants import (
-    MAX_STUPIDITY,
-    REWARD_DIFFICULTY_SCALER,  
-    REWARD_IMPROVEMENT_WEIGHT,
+    REWARD_DIFFICULTY_SCALER,
+    REWARD_RMSE_WEIGHT,
+    REWARD_EFFICIENCY_WEIGHT,
+    MIN_RELATIVE_SCORE,
+    MAX_RELATIVE_SCORE,
+    CAP_FACTOR_EFFICIENCY
 )
 
 
@@ -76,13 +79,14 @@ def get_shape_penalty(correct: torch.Tensor, response: torch.Tensor) -> bool:
 def rmse(
         output_data: torch.Tensor,
         prediction: torch.Tensor,
+        default: float = -1.0,
 ) -> float:
     """Calculates RMSE between miner prediction and correct output"""
     try:
         return ((prediction - output_data) ** 2).mean().sqrt().item()
     except:
         # shape error etc
-        return -1.0
+        return default
 
 def set_penalties(
     output_data: torch.Tensor,
@@ -107,34 +111,45 @@ def set_penalties(
     
     return miners_data
 
-
 def get_curved_scores(
         raw_scores: List[float], 
         gamma: float, 
-        cap_max: bool = True
+        cap_factor: Union[float, int] = None,
+        min_score: float = None,
+        max_score: float = None
 ) -> List[float]:
     """
     Given a list of raw float scores (can by any range),
     normalise them to 0-1 scores,
     and apply gamma correction to curve accordingly.
 
-    Note that maximal error is capped at MAX_STUPIDITY * minimal_error if applicable,
-    to prevent abuse through distribution shifting.
+    Note that minimal and maximal error can each capped.
+     - through the cap_factor (between 0-1), so that:
+       median_score * (1 - cap_factor) <= score <= median_score * (1 + cap_factor),
+    - Through specifying the min and max artificially
+    If neither is specified, will be the actual min/max of the scores,
+        which might allow abuse through distribution shifting.
 
-    This function assumes lower is better!
+    # NOTE: This function assumes higher is better! 
+    # So if you require the opposite, simply make your raw_scores their negative
     """
-    min_score = min(raw_scores)
-    max_score = max(raw_scores)
-    if cap_max:
-        max_score = min(max_score, MAX_STUPIDITY * min_score)
+    if cap_factor:
+        min_score = np.median(raw_scores) * (1 - cap_factor)
+        max_score = np.median(raw_scores) * (1 + cap_factor)
+    else:
+        min_score = min_score or min(raw_scores)
+        max_score = max_score or max(raw_scores)
+    
+    if min_score > max_score: # in case of negative scores
+        min_score, max_score = max_score, min_score
 
     result = []
     for score in raw_scores:
         if max_score == min_score:
             result.append(1.0) # edge case, avoid division by 0
         else:
-            # min to prevent getting negative score
-            norm_score = (max_score - min(score, max_score)) / (max_score - min_score)
+            capped_score = max(min_score, min(score, max_score))
+            norm_score = (capped_score - min_score) / (max_score - min_score)
             result.append(np.power(norm_score, gamma)) # apply gamma correction
     
     return result
@@ -145,7 +160,7 @@ def set_rewards(
     miners_data: List[MinerData],
     baseline_data: Optional[torch.Tensor],
     difficulty_grid: np.ndarray,
-    min_sota_delta: float
+    epsilon: float = 1e-12,
 ) -> List[MinerData]:
     """
     Calculates rewards for miner predictions based on RMSE and relative difficulty.
@@ -166,11 +181,7 @@ def set_rewards(
     if len(miners_data) == 0:
         return miners_data
 
-    # old challenges have no baseline, use 0 to make it not affect scoring.
-    baseline_rmse = 0
-    if baseline_data is not None:
-        baseline_rmse = rmse(output_data, baseline_data)
-        
+    baseline_rmse = rmse(output_data, baseline_data, default=0)
     avg_difficulty = difficulty_grid.mean()
     # make difficulty [-1, 1], then go between [1/scaler, scaler]
     gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
@@ -178,14 +189,16 @@ def set_rewards(
     # compute unnormalised scores
     for miner_data in miners_data:
         miner_data.rmse = rmse(output_data, miner_data.prediction)
-        improvement = baseline_rmse - miner_data.rmse - min_sota_delta
-        miner_data.baseline_improvement = max(0, improvement)
+        # zero devision proof relative improvement
+        improvement = (baseline_rmse - miner_data.rmse + epsilon) / (baseline_rmse + epsilon)
+        miner_data.baseline_improvement = improvement
 
-    quality_scores = get_curved_scores([m.rmse for m in miners_data], gamma, cap_max=True)
-    # negative since curving assumes minimal is the best
-    improvement_scores = get_curved_scores([-m.baseline_improvement for m in miners_data], gamma, cap_max=False)
+    #  Cap between 100% worse and 80% better than OpenMeteo
+    quality_scores = get_curved_scores([m.baseline_improvement for m in miners_data], gamma, min_score=MIN_RELATIVE_SCORE, max_score=MAX_RELATIVE_SCORE)
+    # negative since curving assumes maximal is the best. gamma=1 since challenge bbox doesn't matter here.
+    efficiency_scores = get_curved_scores([-m.response_time for m in miners_data], gamma=1, cap_factor=CAP_FACTOR_EFFICIENCY)
 
-    for miner_data, quality, improvement in zip(miners_data, quality_scores, improvement_scores):
-        miner_data.reward = (1 - REWARD_IMPROVEMENT_WEIGHT) * quality + REWARD_IMPROVEMENT_WEIGHT * improvement
+    for miner_data, quality, efficiency in zip(miners_data, quality_scores, efficiency_scores):
+        miner_data.reward = REWARD_RMSE_WEIGHT * quality + REWARD_EFFICIENCY_WEIGHT * efficiency
 
     return miners_data
