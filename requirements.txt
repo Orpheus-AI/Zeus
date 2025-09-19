@@ -15,7 +15,6 @@ ipython==8.31.0
 ipykernel==6.29.5
 wandb==0.19.0
 httpx==0.28.1
-discord_webhook==1.4.1
 
 cartopy==0.24.1
 tqdm==4.67.1

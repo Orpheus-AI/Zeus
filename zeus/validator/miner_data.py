@@ -5,12 +5,13 @@ import torch
 
 @dataclass
 class MinerData:
-    uid: int
     hotkey: str
+    response_time: float
     prediction: torch.Tensor
-    reward: Optional[float] = None # all below are not set initially
+    uid: Optional[int] = None  # all below are not set initially
+    reward: Optional[float] = None
     rmse: Optional[float] = None
-    baseline_improvement: Optional[float] = None
+    baseline_improvement: Optional[float] = None # percentage (0-1)
     _shape_penalty: Optional[bool] = None
 
     @property
@@ -19,6 +20,7 @@ class MinerData:
              "RMSE": self.rmse,
              "score": self.reward,
              "shape_penalty": self.shape_penalty,
+             "response_time": self.response_time
          }
 
     @property
