@@ -146,8 +146,6 @@ def get_curved_scores(
         max_bound = operator(max_score, cap_factor)
         min_score = min(median_bound, max_bound)
 
-    print(raw_scores, min_score, max_score)
-
     result = []
     for score in raw_scores:
         if max_score == min_score:
