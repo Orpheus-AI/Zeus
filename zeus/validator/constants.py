@@ -41,9 +41,11 @@ REWARD_EFFICIENCY_WEIGHT = 0.3
 # score is percentage worse/better than OpenMeteo baseline. Capped between these percentages (as float)
 MIN_RELATIVE_SCORE = -1.0
 MAX_RELATIVE_SCORE = 0.8
-# when curving scores, below (1 - cap) * median_speed = 1 and above (1 + cap) * median_speed = 0
+# when curving scores, above cap * median_speed = 0
 # to prevent reward curve from being shifted by really bad outlier
-CAP_FACTOR_EFFICIENCY = 0.8
+CAP_FACTOR_EFFICIENCY = 2.0
+# Faster than this is considered 'perfect'
+EFFICIENCY_THRESHOLD = 0.2
 
 # ------------------------------------------------------
 # --------------- Current/Future prediction-------------

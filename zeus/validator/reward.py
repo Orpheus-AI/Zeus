@@ -17,6 +17,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 from typing import List, Optional, Union
+from operator import mul, truediv
 import numpy as np
 import torch
 from zeus.validator.miner_data import MinerData
@@ -26,7 +27,8 @@ from zeus.validator.constants import (
     REWARD_EFFICIENCY_WEIGHT,
     MIN_RELATIVE_SCORE,
     MAX_RELATIVE_SCORE,
-    CAP_FACTOR_EFFICIENCY
+    CAP_FACTOR_EFFICIENCY,
+    EFFICIENCY_THRESHOLD
 )
 
 
@@ -114,9 +116,9 @@ def set_penalties(
 def get_curved_scores(
         raw_scores: List[float], 
         gamma: float, 
+        max_score: float,
         cap_factor: Union[float, int] = None,
         min_score: float = None,
-        max_score: float = None
 ) -> List[float]:
     """
     Given a list of raw float scores (can by any range),
@@ -133,15 +135,16 @@ def get_curved_scores(
     # NOTE: This function assumes higher is better! 
     # So if you require the opposite, simply make your raw_scores their negative
     """
-    if cap_factor:
-        min_score = np.median(raw_scores) * (1 - cap_factor)
-        max_score = np.median(raw_scores) * (1 + cap_factor)
-    else:
-        min_score = min_score or min(raw_scores)
-        max_score = max_score or max(raw_scores)
-    
-    if min_score > max_score: # in case of negative scores
-        min_score, max_score = max_score, min_score
+
+    if min_score is None:
+        if cap_factor is None:
+            # if all better than max, everyone gets perfect score here.
+            min_score = min(max_score, min(raw_scores))
+        
+        operator = truediv if max_score > 0 else mul
+        median_bound = operator(np.median(raw_scores), cap_factor)
+        max_bound = operator(max_score, cap_factor)
+        min_score = min(median_bound, max_bound)
 
     result = []
     for score in raw_scores:
@@ -196,9 +199,11 @@ def set_rewards(
     #  Cap between 100% worse and 80% better than OpenMeteo
     quality_scores = get_curved_scores([m.baseline_improvement for m in miners_data], gamma, min_score=MIN_RELATIVE_SCORE, max_score=MAX_RELATIVE_SCORE)
     # negative since curving assumes maximal is the best. gamma=1 since challenge bbox doesn't matter here.
-    efficiency_scores = get_curved_scores([-m.response_time for m in miners_data], gamma=1, cap_factor=CAP_FACTOR_EFFICIENCY)
+    efficiency_scores = get_curved_scores([-m.response_time for m in miners_data], gamma=1, max_score=-EFFICIENCY_THRESHOLD, cap_factor=CAP_FACTOR_EFFICIENCY)
 
     for miner_data, quality, efficiency in zip(miners_data, quality_scores, efficiency_scores):
-        miner_data.reward = REWARD_RMSE_WEIGHT * quality + REWARD_EFFICIENCY_WEIGHT * efficiency
+        miner_data.quality_score = quality
+        miner_data.efficiency_score = efficiency
+        miner_data.score = REWARD_RMSE_WEIGHT * quality + REWARD_EFFICIENCY_WEIGHT * efficiency
 
     return miners_data
