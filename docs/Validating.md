@@ -14,29 +14,31 @@
 
 ## Installation
 > [!TIP]
-> If you are using RunPod, you can use our [dedicated template](https://runpod.io/console/deploy?template=cyui16nkkd&ref=97t9kcqz) (or use the [Miner template](https://runpod.io/console/deploy?template=x2lktx2xex&ref=97t9kcqz) for GPU support) which comes pre-installed with all required dependencies! Even without RunPod the [Docker image](https://hub.docker.com/repository/docker/ericorpheus/zeus/) behind this template might still work for your usecase.
+> We highly recommend using AWS for Validators. Since response speed is part of the incentive and we value a subnet which brings value globally, we ideally want to split validators geographically.
+> Please reach out to us and will help select the ideal location for you. 
 
-If you are using the Docker image, you still need to clone the GitHub repository. However, all required libraries should be pre-installed within the Docker environment. Therefore, you can skip the Conda virtual environment setup.
+The instructions below are specifically tailored for AWS.
+1. Deploy an EC2 instance.
+It should have at least **4 vCPUs** and **16GB RAM** and **25GBit network performance**. The recommend choice is the `m5n.xlarge` (or better)
+To simplify setup, choose the 'Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.8 (Amazon Linux 2023)' AMI. We will not use the GPU, but do use a lot of its other pre-installed libraries.
+Set its storage to at least **60GB** (80 is recommended).
 
-Download the repository and navigate to the folder.
+2. Install a non-ancient version of Python: 
+```bash
+ sudo dnf install python3.11 -y
+```
+3. Create a virtual environment and activate it
+```bash
+ python3.11 -m venv zeus-venv && source zeus-venv/bin/activate
+```
+
+4. Download the repository and navigate to the folder.
 ```bash
 git clone https://github.com/Orpheus-AI/Zeus.git && cd Zeus
 ```
 
-If you are **not** using the Docker image, we recommend using a Conda virtual environment to install the necessary Python packages.<br>
-You can set up Conda with this [quick command-line install](https://docs.anaconda.com/free/miniconda/#quick-command-line-install), and create a virtual environment with this command:
-
+5. Install the necessary requirements with the following script (make sure zeus-venv is active!)
 ```bash
-conda create -y -n zeus python=3.11
-```
-
-To activate your virtual environment, run `conda activate zeus`. To deactivate, `conda deactivate`.
-
-Install the remaining necessary requirements with the following chained command.
-
-```bash
-conda activate zeus
-chmod +x setup.sh
 ./setup.sh
 ```
 
@@ -118,22 +120,20 @@ So look out for an email from info@open-meteo.com. Please enter the API key in t
 Now you're ready to run your validator!
 
 ```bash
-conda activate zeus
+source zeus-venv/bin/activate # from root folder, not GitHub repo
+cd Zeus/
 pm2 start run_neuron.py -- --validator 
 ```
 
 - Auto updates are enabled by default. To disable, run with `--no-auto-updates`.
 - Self-healing restarts are disabled by default (every 3 hours). To enable, run with `--self-heal`.
 
-## Requirements
+## Hardware requirements
 We strive to make validation as simple as possible on our subnet, aiming to minimise storage and hardware requirements for our validators.
-Only a couple days of environmental data need to be stored at a time, which will never exceed 1GB. Miner predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which should also not exceed 1GB. As long as you have enough storage to install our standard Python dependencies (i.e. PyTorch), you can likely run our entire codebase!  
+Only a couple days of environmental data need to be stored at a time, which take around 1GB of storage. Miner predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which can reach around 15GB. 
+Therefore we recommend a total storage of around 80GB, allowing for ample space to install all dependencies and store the miner predictions.
 
-Data processing is done locally, but since this has been highly optimised, you will also **not need any GPU** or CUDA support. You will only need a decent CPU machine, where we recommend having at least 8GB of RAM. Since data is loaded over the internet, it is useful to have at least a moderately decent (>3MB/s) internet connection.
-
-You are required to provide an API key for the Climate Data Store in order to retrieve data to send to miners, the validator will shut down if this authentication fails. The API-key can be retrieved from the [official CDS website](https://cds.climate.copernicus.eu/how-to-api), after you have created an account at this link as well. Creating an account is **completely free of charge** and only necessary at first launch. Once you have obtained an API key, please enter it in the [validator.env](../validator.env) file. 
-
-We would kindly ask you to link you validator to Weights and Biases, since this helps both miners and outside parties to obtain visualisation of the current state of the subnet. This can be done by specifying your API key in the ``validator.env` file.
+Data processing is done locally, but since this has been highly optimised, you will also **not need any GPU** or CUDA support. You will only need a decent CPU machine, where we recommend having at least 16GB of RAM. Since data is loaded over the internet, it is useful to have at least a moderately decent (>5GBit/s) internet connection.
 
 > [!TIP]
 > Should you need any assistance with setting up the validator, W&B or anything else, please don't hesitate to reach out to the team at Ørpheus A.I. via Discord!

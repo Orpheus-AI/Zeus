@@ -2,19 +2,27 @@
 
 # check if sudo exists as it doesn't on RunPod
 if command -v sudo 2>&1 >/dev/null; then
-    PREFIX="sudo"
+    SUDO="sudo"
 else
-    PREFIX=""
+    SUDO=""
 fi
 
-$PREFIX apt update -y
-$PREFIX apt install -y \
-    python3-pip \
-    nano \
-    libgl1 \
-    npm
+if command -v apt 2>&1 >/dev/null; then
+    echo "Installing dependencies using APT. Please consider switching to AWS instead!"
 
-$PREFIX npm install -g pm2@6.0.5
+    $SUDO apt update -y
+    $SUDO apt install python3-pip unzip npm -y
+elif command -v yum 2>&1 >/dev/null; then
+    echo "Installing dependencies using YUM"
+
+    $SUDO yum install python3-pip unzip npm -y
+    pip install --upgrade pip
+else
+    echo "FATAL! System does not support either APT or YUM"
+    exit
+fi
+
+$SUDO npm install -g pm2@latest
 
 # Make sure TCP processes have sufficient memory
 # Doesn't work on Docker, so check if modifyable first
@@ -25,7 +33,7 @@ if [ ! -f /.dockerenv ]; then
     net.ipv4.tcp_wmem=4096 16384 13107200
     "
     echo "$TCP_SETTINGS" | $PREFIX tee /etc/sysctl.d/99-zeus-subnet-tcp.conf > /dev/null
-    $PREFIX sysctl --system
+    $SUDO sysctl --system
     echo "Increased TCP memory settings for optimal concurrency!"
 fi
 

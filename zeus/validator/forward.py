@@ -107,7 +107,7 @@ async def forward(self: BaseValidatorNeuron):
         self.uid_tracker.mark_finished(uids, good=False)
         bt.logging.success(f"Punishing miners that got a penalty: {uids}")
         self.update_scores(
-            [miner.reward for miner in bad_miners],
+            [miner.score for miner in bad_miners],
             uids,
         )
         do_wandb_logging(self, sample, bad_miners)
@@ -182,14 +182,14 @@ def complete_challenge(
     )
 
     self.update_scores(
-        [miner.reward for miner in miners_data],
+        [miner.score for miner in miners_data],
         [miner.uid for miner in miners_data],
     )
     
     bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
     for miner in miners_data:
         bt.logging.debug(
-            f"UID: {miner.uid} | Predicted shape: {miner.prediction.shape} | Reward: {miner.reward} | Penalty: {miner.shape_penalty}"
+            f"UID: {miner.uid} | Predicted shape: {miner.prediction.shape} | Reward: {miner.score} | Penalty: {miner.shape_penalty}"
         )
     do_wandb_logging(self, sample, miners_data, baseline)
 
