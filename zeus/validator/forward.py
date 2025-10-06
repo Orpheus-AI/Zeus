@@ -70,9 +70,11 @@ async def forward(self: BaseValidatorNeuron):
         f"Data sampled starts from {timestamp_to_str(sample.start_timestamp)} | Asked to predict {sample.predict_hours} hours ahead."
     )
 
-    # get the baseline data, which we also store and check against
-    bt.logging.info("Fetching OpenMeteo baseline")
-    sample.output_data = self.open_meteo_loader.get_output(sample)
+    bt.logging.info("Fetching OpenMeteo and ECMWF IFS HRES baselines!")
+    # get the Open Meteo baseline data, which we also store and check against
+    sample.om_baseline = self.open_meteo_loader.get_output(sample)
+    # Not used for scoring, but also logged to W&B for comparisons of miner quality
+    sample.ifs_hres_baseline = self.open_meteo_loader.get_output(sample, model="ecmwf_ifs")
   
     miner_uids = self.uid_tracker.get_random_uids(
         k = self.config.neuron.sample_size,
@@ -155,7 +157,7 @@ def parse_miner_inputs(
 
     # pre-calculate penalities since we need those to filter
     return set_penalties(
-        output_data=sample.output_data,
+        correct_shape=sample.om_baseline.shape,
         miners_data=miners_data
     )
 
@@ -163,7 +165,6 @@ def parse_miner_inputs(
 def complete_challenge(
     self: BaseValidatorNeuron,
     sample: Era5Sample,
-    baseline: Optional[torch.Tensor],
     hotkeys: List[str],
     predictions: List[torch.Tensor],
     response_times: List[float]
@@ -177,7 +178,7 @@ def complete_challenge(
     miners_data = set_rewards(
         output_data=sample.output_data, 
         miners_data=miners_data, 
-        baseline_data=baseline,
+        baseline_data=sample.om_baseline,
         difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
     )
 
@@ -191,14 +192,13 @@ def complete_challenge(
         bt.logging.debug(
             f"UID: {miner.uid} | Predicted shape: {miner.prediction.shape} | Reward: {miner.score} | Penalty: {miner.shape_penalty}"
         )
-    do_wandb_logging(self, sample, miners_data, baseline)
+    do_wandb_logging(self, sample, miners_data)
 
 
 def do_wandb_logging(
         self, 
         challenge: Era5Sample, 
         miners_data: List[MinerData], 
-        baseline: Optional[torch.Tensor] = None
     ):
     if self.config.wandb.off:
         return
@@ -218,7 +218,8 @@ def do_wandb_logging(
             "end_timestamp": challenge.end_timestamp,
             "predict_hours": challenge.predict_hours,
             "lat_lon_bbox": challenge.get_bbox(),
-            "baseline_rmse": rmse(challenge.output_data, baseline),
+            "baseline_rmse": rmse(challenge.output_data, challenge.om_baseline),
+            "ifs_hres_rmse": rmse(challenge.output_data, challenge.ifs_hres_baseline),
             "uid_to_hotkey": uid_to_hotkey,
         },
     )

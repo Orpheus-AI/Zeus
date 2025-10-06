@@ -33,7 +33,7 @@ from zeus.validator.constants import (
 
 
 def help_format_miner_output(
-    correct: torch.Tensor, response: torch.Tensor
+    correct_shape: torch.Size, response: torch.Tensor
 ) -> torch.Tensor:
     """
     Reshape or slice miner output if it is almost the correct shape.
@@ -45,11 +45,11 @@ def help_format_miner_output(
     Returns:
        Sliced/reshaped miner output.
     """
-    if correct.shape == response.shape:
+    if correct_shape == response.shape:
         return response
     
     try:
-        if response.ndim - 1 == correct.ndim and response.shape[-1] == 1:
+        if response.ndim - 1 == len(correct_shape) and response.shape[-1] == 1:
             # miner forgot to squeeze.
             response = response.squeeze(-1)
         
@@ -59,7 +59,7 @@ def help_format_miner_output(
         return response
 
 
-def get_shape_penalty(correct: torch.Tensor, response: torch.Tensor) -> bool:
+def get_shape_penalty(correct_shape: torch.Size, response: torch.Tensor) -> bool:
     """
     Compute penalty for predictions that are incorrectly shaped or contains NaN/infinities.
 
@@ -71,7 +71,7 @@ def get_shape_penalty(correct: torch.Tensor, response: torch.Tensor) -> bool:
         float: True if there is a shape penalty, False otherwise
     """
     penalty = False
-    if response.shape != correct.shape:
+    if response.shape != correct_shape:
         penalty = True
     elif not torch.isfinite(response).all():
         penalty = True
@@ -91,7 +91,7 @@ def rmse(
         return default
 
 def set_penalties(
-    output_data: torch.Tensor,
+    correct_shape: torch.Size,
     miners_data: List[MinerData],
 ) -> List[MinerData]:
     """
@@ -106,8 +106,8 @@ def set_penalties(
     """
     for miner_data in miners_data:
         # potentially fix inputs for miners
-        miner_data.prediction = help_format_miner_output(output_data, miner_data.prediction)
-        shape_penalty = get_shape_penalty(output_data, miner_data.prediction)
+        miner_data.prediction = help_format_miner_output(correct_shape, miner_data.prediction)
+        shape_penalty = get_shape_penalty(correct_shape, miner_data.prediction)
         # set penalty, including rmse/reward if there is a penalty
         miner_data.shape_penalty = shape_penalty
     
