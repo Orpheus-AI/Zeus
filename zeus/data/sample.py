@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union, List
+from typing import Optional, Tuple
 import torch
 import time
 
@@ -21,6 +21,8 @@ class Era5Sample:
         query_timestamp: Optional[int] = None,
         output_data: Optional[torch.Tensor] = None,
         predict_hours: Optional[int] = None,
+        om_baseline: Optional[torch.Tensor] = None,
+        ifs_hres_baseline: Optional[torch.Tensor] = None
     ):
         """
         Create a datasample, either containing actual data or representing a database entry.
@@ -45,6 +47,10 @@ class Era5Sample:
             self.predict_hours = output_data.shape[0]
         elif predict_hours is None:
             raise ValueError("Either output data or predict hours must be provided.")
+        
+        # Usually set through OpenMeteoLoader or from database
+        self.om_baseline = om_baseline
+        self.ifs_hres_baseline = ifs_hres_baseline
         
 
     def get_bbox(self) -> Tuple[float]:

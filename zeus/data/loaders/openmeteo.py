@@ -22,7 +22,7 @@ class OpenMeteoLoader:
         self.open_meteo_url = open_meteo_url
         self.open_meteo_api = openmeteo_requests.Client()
 
-    def get_output(self, sample: Era5Sample) -> torch.Tensor:
+    def get_output(self, sample: Era5Sample, model: str = "best_match") -> torch.Tensor:
         start_time = to_timestamp(sample.start_timestamp)
         end_time = to_timestamp(sample.end_timestamp)
 
@@ -32,6 +32,7 @@ class OpenMeteoLoader:
             "latitude": latitudes.tolist(),
             "longitude": longitudes.tolist(),
             "hourly": converter.om_name,
+            "models": model,
             "start_hour": start_time.isoformat(timespec="minutes"),
             "end_hour": end_time.isoformat(timespec="minutes"),
             "apikey": self.api_key

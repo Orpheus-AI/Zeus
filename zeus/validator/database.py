@@ -1,8 +1,9 @@
-from typing import List, Callable
+from typing import List, Callable, Union, Optional
 import sqlite3
 import time
 import torch
 import pandas as pd
+import numpy as np
 import json
 
 from zeus.data.loaders.era5_cds import Era5CDSLoader
@@ -53,7 +54,8 @@ class ResponseDatabase:
                     hours_to_predict INTEGER,
                     baseline TEXT,
                     inserted_at REAL,
-                    variable TEXT DEFAULT '2m_temperature'
+                    variable TEXT DEFAULT '2m_temperature',
+                    ifs_hres_baseline TEXT
                 );
                 """
             )
@@ -70,9 +72,9 @@ class ResponseDatabase:
                 );
                 """
             )
-            # migrate from v1.3.0 -> v1.4.0
-            if not column_exists(cursor, "responses", "response_time"):
-                cursor.execute("ALTER TABLE responses ADD COLUMN response_time REAL DEFAULT 5.0;")
+            # migrate from v1.4.1 -> v1.4.2
+            if not column_exists(cursor, "challenges", "ifs_hres_baseline"):
+                cursor.execute("ALTER TABLE challenges ADD COLUMN ifs_hres_baseline TEXT;")
 
             conn.commit()
 
@@ -96,17 +98,18 @@ class ResponseDatabase:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO challenges (lat_start, lat_end, lon_start, lon_end, start_timestamp, end_timestamp, hours_to_predict, baseline, inserted_at, variable)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO challenges (lat_start, lat_end, lon_start, lon_end, start_timestamp, end_timestamp, hours_to_predict, baseline, inserted_at, variable, ifs_hres_baseline)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     *sample.get_bbox(),
                     sample.start_timestamp,
                     sample.end_timestamp,
                     sample.predict_hours,
-                    json.dumps(sample.output_data.tolist()),
+                    serialize(sample.om_baseline),
                     sample.query_timestamp,
-                    sample.variable
+                    sample.variable,
+                    serialize(sample.ifs_hres_baseline),
                 ),
             )
             challenge_uid = cursor.lastrowid
@@ -127,8 +130,7 @@ class ResponseDatabase:
             data_to_insert = []
             # prepare data for insertion
             for miner in miners_data:
-                prediction_json = json.dumps(miner.prediction.tolist())
-                data_to_insert.append((miner.hotkey, challenge_uid, prediction_json, miner.response_time))
+                data_to_insert.append((miner.hotkey, challenge_uid, serialize(miner.prediction), miner.response_time))
 
             cursor.executemany(
                 """
@@ -140,7 +142,7 @@ class ResponseDatabase:
             conn.commit()
 
     def score_and_prune(
-        self, score_func: Callable[[Era5Sample, torch.Tensor, List[str], List[torch.Tensor], List[float]], None]
+        self, score_func: Callable[[Era5Sample, List[str], List[torch.Tensor], List[float]], None]
     ):
         """
         Check the database for challenges and responses, and prune them if they are not needed anymore.
@@ -156,12 +158,12 @@ class ResponseDatabase:
             cursor.execute(
                 """
                 SELECT * FROM challenges WHERE end_timestamp <= ?;
-            """,
+                """,
                 (latest_available,),
             )
             challenges = cursor.fetchall()
 
-        for i, challenge in enumerate(challenges):
+        for challenge in challenges:
             # load the sample
             (
                 challenge_uid,
@@ -172,9 +174,10 @@ class ResponseDatabase:
                 start_timestamp,
                 end_timestamp,
                 hours_to_predict,
-                baseline,
+                om_baseline,
                 inserted_at,
                 variable,
+                ifs_hres_baseline,
             ) = challenge
 
             sample = Era5Sample(
@@ -187,6 +190,8 @@ class ResponseDatabase:
                 lon_start=lon_start,
                 lon_end=lon_end,
                 predict_hours=hours_to_predict,
+                om_baseline=deserialize(om_baseline),
+                ifs_hres_baseline=deserialize(ifs_hres_baseline),
             )
             # load the correct output and set it if it is available
             output = self.cds_loader.get_output(sample)
@@ -198,29 +203,27 @@ class ResponseDatabase:
                     self._delete_challenge(challenge_uid)
                 continue
         
-            baseline = torch.tensor(json.loads(baseline))
             # load the miner predictions
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
                     SELECT * FROM responses WHERE challenge_uid = ?;
-                """,
+                    """,
                     (challenge_uid,),
                 )
                 responses = cursor.fetchall()
 
                 miner_hotkeys = [r[0] for r in responses]
-                predictions = [torch.tensor(json.loads(r[2])) for r in responses]
+                predictions = [deserialize(r[2]) for r in responses]
                 response_times = [r[3] for r in responses]
             
             # don't score while database is open in case there is a metagraph delay.
-            score_func(sample, baseline, miner_hotkeys, predictions, response_times)
+            score_func(sample, miner_hotkeys, predictions, response_times)
             self._delete_challenge(challenge_uid)
 
             # don't score miners too quickly in succession and always wait after last scoring
-            if i > 0:
-                time.sleep(2)
+            time.sleep(1)
 
     def _delete_challenge(self, challenge_uid: int):
         with sqlite3.connect(self.db_path) as conn:
@@ -229,13 +232,13 @@ class ResponseDatabase:
             cursor.execute(
                 """
                 DELETE FROM challenges WHERE uid = ?;
-            """,
+                """,
                 (challenge_uid,),
             )
             cursor.execute(
                 """
                 DELETE FROM responses WHERE challenge_uid = ?;
-            """,
+                """,
                 (challenge_uid,),
             )
             conn.commit()
@@ -259,3 +262,13 @@ def column_exists(cursor: sqlite3.Cursor, table_name: str, column_name: str):
     cursor.execute(f"PRAGMA table_info({table_name})")
     columns = [row[1] for row in cursor.fetchall()]
     return column_name in columns
+
+def serialize(tensor: Optional[Union[np.ndarray, torch.Tensor]]) -> str:
+        if tensor is None:
+            return '[]'
+        return json.dumps(tensor.tolist())
+
+def deserialize(str_tensor: Optional[str]) -> Optional[torch.Tensor]:
+    if str_tensor is None:
+        return None
+    return torch.tensor(json.loads(str_tensor))
