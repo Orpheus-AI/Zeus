@@ -321,7 +321,8 @@ class ValidatorProxy:
                 }
             }
     
-def is_valid_synapse(response: torch.Tensor, correct_shape: Tuple[int]) -> bool:
-    dummy_output = torch.zeros(*correct_shape)
-    prediction = help_format_miner_output(dummy_output, response)
-    return not get_shape_penalty(dummy_output, prediction)
+def is_valid_synapse(response: torch.Tensor, correct_shape: Union[torch.Size, Tuple[int]]) -> bool:
+    if not isinstance(correct_shape, torch.Size):
+        correct_shape = torch.Size(correct_shape)
+    prediction = help_format_miner_output(correct_shape, response)
+    return not get_shape_penalty(correct_shape, prediction)
