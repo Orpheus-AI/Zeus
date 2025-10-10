@@ -59,12 +59,12 @@ class WindConverter(VariableConverter, ABC):
     )
     def om_to_era5(self, data: Union[np.ndarray, torch.Tensor], trigeometry: Callable) -> Union[np.ndarray, torch.Tensor]:
         """
-        OpenMeteo only provides overall wind speed (km/h) and wind direction at 80 or 120 meters.
+        OpenMeteo only provides overall wind speed (km/h) and wind direction at 100 meters.
         So we convert this to eastern wind at a 100 meters (m/s). We average altitudes.
         See: https://confluence.ecmwf.int/pages/viewpage.action?pageId=133262398
 
         data: Any array/tensor with last dimension being the variables (in order!):
-            "wind speed 80m", "wind direction 80m", "wind speed 120m", "wind direction 120m"
+            "wind speed 100m", "wind direction 100m"
         returns: array/tensor of eastern winds, with shape excluding last dimension
         """
         Vs = data[..., torch.arange(0, data.shape[-1], 2)]
@@ -73,7 +73,7 @@ class WindConverter(VariableConverter, ABC):
         phis = np.deg2rad(data[..., torch.arange(1, data.shape[-1], 2)])
      
         component = - Vs * trigeometry(phis)
-        # take average of 80 and 120 meters for 100m
+        # legacy mean but also squeezes
         return component.mean(axis=-1)
     
 
@@ -94,13 +94,13 @@ REGISTRY = {converter.data_var: converter for converter in [
         PrecipitationConverter("total_precipitation", om_name="precipitation", short_code="tp", unit="m/h"),
         EastWindConverter(
             "100m_u_component_of_wind", 
-            om_name=["wind_speed_80m", "wind_direction_80m", "wind_speed_120m", "wind_direction_120m"],
+            om_name=["wind_speed_100m", "wind_direction_100m"],
             short_code="u100",
             unit="m/s",
         ),
         NorthWindConverter(
             "100m_v_component_of_wind", 
-            om_name=["wind_speed_80m", "wind_direction_80m", "wind_speed_120m", "wind_direction_120m"],
+            om_name=["wind_speed_100m", "wind_direction_100m"],
             short_code="v100",
             unit="m/s",
         ),

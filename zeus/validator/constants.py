@@ -36,8 +36,8 @@ ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
 # 1.0 would imply no difficulty scaling, should be >= 1.
 REWARD_DIFFICULTY_SCALER = 3.0
 # 70% of emission for quality, 30% for speed
-REWARD_RMSE_WEIGHT = 0.7
-REWARD_EFFICIENCY_WEIGHT = 0.3
+REWARD_RMSE_WEIGHT = 0.8
+REWARD_EFFICIENCY_WEIGHT = 0.2
 # score is percentage worse/better than OpenMeteo baseline. Capped between these percentages (as float)
 MIN_RELATIVE_SCORE = -1.0
 MAX_RELATIVE_SCORE = 0.8
@@ -45,7 +45,7 @@ MAX_RELATIVE_SCORE = 0.8
 # to prevent reward curve from being shifted by really bad outlier
 CAP_FACTOR_EFFICIENCY = 2.0
 # Faster than this is considered 'perfect'
-EFFICIENCY_THRESHOLD = 0.2
+EFFICIENCY_THRESHOLD = 0.4
 
 # ------------------------------------------------------
 # --------------- Current/Future prediction-------------

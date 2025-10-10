@@ -390,7 +390,8 @@ class BaseValidatorNeuron(BaseNeuron):
         immunity: int = self.metagraph.hparams.immunity_period
 
         # relative miner age, negative is immune
-        miner_ages: np.ndarray = (self.metagraph.block - self.metagraph.block_at_registration) / immunity - 1
+        # block is a Tensor for Torch-based metagraph so convert it first
+        miner_ages: np.ndarray = (np.asarray(self.metagraph.block) - self.metagraph.block_at_registration) / immunity - 1
         # set lineary decreasing value everywhere
         alphas = (1 - miner_ages) * alpha_max + miner_ages * alpha_min
         # immune miners use maximum moving average alpha
