@@ -43,7 +43,7 @@ class PredictionSynapse(bt.Synapse, ABC):
         title="Number of hours",
         description="The number of desired output hours for the prediction.",
         default=1,
-        frozen=False,
+        frozen=True,
     )
 
     # Optional request output, filled by receiving axon.
@@ -59,7 +59,7 @@ class PredictionSynapse(bt.Synapse, ABC):
         title="ERA5 variable you are asked to predict",
         description="Each request concerns a single CDS variable in long underscored form",
         default="2m_temperature",
-        frozen=False,
+        frozen=True,
     )
 
     def deserialize(self) -> torch.Tensor:
@@ -83,19 +83,19 @@ class TimePredictionSynapse(PredictionSynapse):
         title="Locations to predict",
         description="Locations to predict. Represents a grid of (latitude, longitude) pairs.",
         default=[],
-        frozen=False,
+        frozen=True,
     )
 
     start_time: float = Field(
         title="start timestamp",
         description="Starting timestamp in GMT+0 as a float",
         default=0.0,
-        frozen=False,
+        frozen=True,
     )
 
     end_time: float = Field(
         title="end timestamp",
         description="Ending timestamp in GMT+0 as a float",
         default=0.0,
-        frozen=False,
+        frozen=True,
     )

@@ -133,6 +133,21 @@ class Era5CDSLoader(Era5BaseLoader):
         end_timestamp = start_timestamp + pd.Timedelta(hours=num_predict_hours - 1)
 
         return start_timestamp, end_timestamp, num_predict_hours
+    
+    def get_relative_age(self, sample: Era5Sample) -> float:
+        """
+        Returns whether a sample involves a past prediction (<-1, 0>),
+        or future prediction (<0, 1>), and by how much,
+        normalised to the bounds of possible start and end times
+        """
+        if sample.end_timestamp < sample.query_timestamp:
+            # past 5 days prediction, note negative in offset_range so flip substraction
+            age = pd.Timedelta(seconds=sample.query_timestamp - sample.start_timestamp)
+            relative_age = age / pd.Timedelta(hours=self.start_offset_range[0])
+        else:
+            age = pd.Timedelta(seconds=sample.end_timestamp - sample.query_timestamp)
+            relative_age = age / pd.Timedelta(hours=self.start_offset_range[1] + self.predict_sample_range[1])
+        return relative_age
 
     def get_sample(self) -> Era5Sample:
         """
