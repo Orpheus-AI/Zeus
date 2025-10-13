@@ -17,9 +17,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 from typing import List, Optional, Union
+from traceback import format_exception
 from operator import mul, truediv
 import numpy as np
 import torch
+import bittensor as bt
 from zeus.validator.miner_data import MinerData
 from zeus.validator.constants import (
     REWARD_DIFFICULTY_SCALER,
@@ -81,14 +83,17 @@ def get_shape_penalty(correct_shape: torch.Size, response: torch.Tensor) -> bool
 def rmse(
         output_data: torch.Tensor,
         prediction: torch.Tensor,
-        default: float = -1.0,
+        default: Optional[float] = None,
 ) -> float:
     """Calculates RMSE between miner prediction and correct output"""
     try:
         return ((prediction - output_data) ** 2).mean().sqrt().item()
-    except:
+    except Exception as e:
         # shape error etc
-        return default
+        if default is None:
+            raise e
+        bt.logging.warning(f"Failed to calculate RMSE between {output_data} and {prediction}. Returning {default} instead!")
+        return default 
 
 def set_penalties(
     correct_shape: torch.Size,
