@@ -210,6 +210,13 @@ def do_wandb_logging(
         )
 
     uid_to_hotkey = {miner.uid: miner.hotkey for miner in miners_data}
+    if challenge.output_data is not None:
+        wandb.log(
+            {
+                "baseline_rmse": rmse(challenge.output_data, challenge.om_baseline, default=np.nan),
+                "ifs_hres_rmse": rmse(challenge.output_data, challenge.ifs_hres_baseline, default=np.nan),
+            }, commit=False
+        )
     wandb.log(
         {
             "query_timestamp": challenge.query_timestamp,
@@ -218,8 +225,6 @@ def do_wandb_logging(
             "end_timestamp": challenge.end_timestamp,
             "predict_hours": challenge.predict_hours,
             "lat_lon_bbox": challenge.get_bbox(),
-            "baseline_rmse": rmse(challenge.output_data, challenge.om_baseline),
-            "ifs_hres_rmse": rmse(challenge.output_data, challenge.ifs_hres_baseline),
             "uid_to_hotkey": uid_to_hotkey,
         },
     )

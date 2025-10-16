@@ -87,6 +87,16 @@ class NorthWindConverter(WindConverter):
 
     def om_to_era5(self, data: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         return super().om_to_era5(data, trigeometry=np.cos)
+    
+
+class SurfacePressureConverter(VariableConverter):
+    def era5_to_om(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
+        """pascal to hectopascal"""
+        return data / 100
+
+    def om_to_era5(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
+        """hectopascal to pascal"""
+        return data * 100
          
 
 REGISTRY = {converter.data_var: converter for converter in [
@@ -104,7 +114,8 @@ REGISTRY = {converter.data_var: converter for converter in [
             short_code="v100",
             unit="m/s",
         ),
-        TemperatureConverter("2m_dewpoint_temperature", om_name="dew_point_2m", short_code="d2m", unit="K")
+        TemperatureConverter("2m_dewpoint_temperature", om_name="dew_point_2m", short_code="d2m", unit="K"),
+        SurfacePressureConverter("surface_pressure", om_name="surface_pressure", short_code="sp", unit="Pa")
 ]}
 
 def get_converter(data_var: str) -> VariableConverter:
