@@ -180,6 +180,7 @@ def complete_challenge(
         miners_data=miners_data, 
         baseline_data=sample.om_baseline,
         difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
+        challenge_age=self.cds_loader.get_relative_age(sample),
     )
 
     self.update_scores(
