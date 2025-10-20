@@ -195,7 +195,7 @@ def set_rewards(
     # make difficulty [-1, 1], then go between [1/scaler, scaler]
     diff_gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
     # challenges far in future are now considered more difficult
-    gamma = diff_gamma + max(0, challenge_age)
+    gamma = 1 / (diff_gamma + max(0, challenge_age))
 
     # compute unnormalised scores
     for miner_data in miners_data:

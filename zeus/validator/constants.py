@@ -35,7 +35,7 @@ ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
 # ------------------ Reward Constants -----------------
 # ------------------------------------------------------
 # 1.0 would imply no difficulty scaling, should be >= 1.
-REWARD_DIFFICULTY_SCALER = 3.0
+REWARD_DIFFICULTY_SCALER = 2.0
 # 70% of emission for quality, 30% for speed
 REWARD_RMSE_WEIGHT = 0.8
 REWARD_EFFICIENCY_WEIGHT = 0.2

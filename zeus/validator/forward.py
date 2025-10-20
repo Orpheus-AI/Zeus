@@ -73,6 +73,10 @@ async def forward(self: BaseValidatorNeuron):
     bt.logging.info("Fetching OpenMeteo and ECMWF IFS HRES baselines!")
     # get the Open Meteo baseline data, which we also store and check against
     sample.om_baseline = self.open_meteo_loader.get_output(sample)
+    if not torch.isfinite(sample.om_baseline).all():
+        bt.logging.warning("OpenMeteo baseline contains NaN or Inf values, skipping this sample.")
+        return
+
     # Not used for scoring, but also logged to W&B for comparisons of miner quality
     sample.ifs_hres_baseline = self.open_meteo_loader.get_output(sample, model="ecmwf_ifs")
   
