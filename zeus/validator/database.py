@@ -197,7 +197,7 @@ class ResponseDatabase:
             output = self.cds_loader.get_output(sample)
             sample.output_data = output
 
-            if output is None or output.shape[0] != hours_to_predict:
+            if output is None or output.shape[0] != hours_to_predict or not torch.isfinite(output).all():
                 if end_timestamp < (latest_available - pd.Timedelta(days=3).total_seconds()):
                     # challenge is unscore-able, delete it
                     self._delete_challenge(challenge_uid)
