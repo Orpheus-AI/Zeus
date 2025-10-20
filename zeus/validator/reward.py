@@ -168,6 +168,7 @@ def set_rewards(
     miners_data: List[MinerData],
     baseline_data: Optional[torch.Tensor],
     difficulty_grid: np.ndarray,
+    challenge_age: float,
     epsilon: float = 1e-12,
 ) -> List[MinerData]:
     """
@@ -192,7 +193,9 @@ def set_rewards(
     baseline_rmse = rmse(output_data, baseline_data, default=0)
     avg_difficulty = difficulty_grid.mean()
     # make difficulty [-1, 1], then go between [1/scaler, scaler]
-    gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
+    diff_gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
+    # challenges far in future are now considered more difficult
+    gamma = diff_gamma + max(0, challenge_age)
 
     # compute unnormalised scores
     for miner_data in miners_data:
@@ -203,7 +206,7 @@ def set_rewards(
 
     #  Cap between 100% worse and 80% better than OpenMeteo
     quality_scores = get_curved_scores([m.baseline_improvement for m in miners_data], gamma, min_score=MIN_RELATIVE_SCORE, max_score=MAX_RELATIVE_SCORE)
-    # negative since curving assumes maximal is the best. gamma=1 since challenge bbox doesn't matter here.
+    # negative since curving assumes maximal is the best. gamma=1 since challenge content doesn't matter here.
     efficiency_scores = get_curved_scores([-m.response_time for m in miners_data], gamma=1, max_score=-EFFICIENCY_THRESHOLD, cap_factor=CAP_FACTOR_EFFICIENCY)
 
     for miner_data, quality, efficiency in zip(miners_data, quality_scores, efficiency_scores):
