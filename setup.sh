@@ -60,6 +60,7 @@ WALLET_HOTKEY=default
 # Miner Settings:
 AXON_PORT=
 BLACKLIST_FORCE_VALIDATOR_PERMIT=True          # Default setting to force validator permit for blacklisting
+WEATHER_XM_API_KEY=                            # Only required if you participate in the local challenges
 EOL
     echo "File 'miner.env' created."
 fi
@@ -88,6 +89,7 @@ PROXY_PORT=
 WANDB_API_KEY=                  # https://wandb.ai/authorize
 CDS_API_KEY=                    # https://github.com/Orpheus-AI/Zeus/blob/main/docs/Validating.md#ecmwf
 OPEN_METEO_API_KEY=             # https://open-meteo.com/en/pricing#plans (Cheapest one suffices)
+WEATHERXM_API_KEY=              # https://pro.weatherxm.com/sign-in
 PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourself
 
 # Optional integrations

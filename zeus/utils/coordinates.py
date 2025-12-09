@@ -1,3 +1,23 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+
 from typing import Tuple, Union, List
 import numpy as np
 import math
@@ -68,6 +88,15 @@ def get_grid(
 ) -> torch.Tensor:
     """
     Get a grid of lat-lon points in the given bounding box.
+    Args:
+        lat_start: The start latitude.
+        lat_end: The end latitude.
+        lon_start: The start longitude.
+        lon_end: The end longitude.
+        fidelity: The fidelity of the grid.
+
+    Returns:
+        torch.Tensor: The grid of lat-lon points. Shape: (lat, lon, 2)
     """
     return torch.stack(
         torch.meshgrid(
@@ -85,6 +114,15 @@ def get_grid(
     "return: [2]",
 )
 def gaussian_grid_sample(grid: Union[torch.Tensor, np.ndarray], stds_in_radius = 3) -> Tuple[float, float]:
+    """
+    Sample a random grid point from the given grid using a Gaussian distribution.
+    Args:
+        grid: The grid to sample from.
+        stds_in_radius: The number of standard deviations as a factor of the radius.
+
+    Returns:
+        Tuple[float, float]: The sampled grid point.
+    """
     lat, lon = grid.shape[:2]
 
     while True:
@@ -137,6 +175,17 @@ def interp_coordinates(
         to_lat: float,
         to_lon: float,
 ) -> torch.Tensor:
+    """
+    Interpolate the input tensor to the given latitude and longitude.
+    Args:
+        input: The input tensor to interpolate.
+        grid: The grid to interpolate to.
+        to_lat: The latitude to interpolate to.
+        to_lon: The longitude to interpolate to.
+
+    Returns:
+        torch.Tensor: The interpolated tensor. Shape: (time, 1, 1)
+    """
     coords = torch.tensor([to_lat, to_lon])
     interp_grid = (coords - grid[0,0]) / (grid[-1,-1] - grid[0, 0])
     interp_grid = (interp_grid * 2 - 1).repeat(input.size(0), 1, 1, 1) # time, 1, 1, 2

@@ -1,15 +1,32 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from typing import List, Union, Dict, Any, Tuple
 from functools import partial
 import os
 import time
-import base64
 import asyncio
 import traceback
 
 import bittensor as bt
 import numpy as np
 import pandas as pd
-import pytz
 import torch
 import uvicorn
 
@@ -18,22 +35,29 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from timezonefinder import TimezoneFinder
 
 from zeus.validator.constants import (
-    LIVE_START_OFFSET_RANGE,
+    ERA5_START_OFFSET_RANGE,
     ERA5_AREA_SAMPLE_RANGE, 
     PROXY_QUERY_K, 
-    PROXY_CUTOFF_PERCENT,
     ERA5_DATA_VARS,
+    WEATHER_XM_DATA_VARS,
+    WEATHERXM_START_OFFSET_RANGE
 )
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.validator.reward import help_format_miner_output, get_shape_penalty
-from zeus.protocol import TimePredictionSynapse
+from zeus.protocol import TimePredictionSynapse, LocalPredictionSynapse
 from zeus.utils.time import get_today, get_hours, safe_tz_convert
 from zeus.utils.coordinates import get_grid, expand_to_grid, interp_coordinates
-from zeus.data.converter import get_converter, VariableConverter
+from zeus.data.era5.converter import get_converter, VariableConverter
+from zeus.data.weatherxm.variables import get_wxm_variable, WeatherXMVariable
+from zeus.validator.constants import MechanismType
+from zeus.data.weatherxm.station import Station
 
-from zeus.api.dendrite import MoEDendrite
+from zeus.base.dendrite import ZeusDendrite
 
 class ValidatorProxy:
+
+    PROXY_TIMEOUT = 5
+
     def __init__(
         self,
         validator: BaseValidatorNeuron,
@@ -46,7 +70,7 @@ class ValidatorProxy:
 
         self.timezone_finder = TimezoneFinder()
         self.validator = validator
-        self.dendrite = MoEDendrite(wallet=validator.wallet, cutoff_percent=PROXY_CUTOFF_PERCENT)
+        self.dendrite = ZeusDendrite(wallet=validator.wallet)
         self.app = FastAPI()
         self.app.add_api_route(
             "/predictGrid",
@@ -57,6 +81,12 @@ class ValidatorProxy:
         self.app.add_api_route(
             "/predictPoint",
             self.predict_point,
+            methods=["POST"],
+            dependencies=[Depends(self.get_self)],
+        )
+        self.app.add_api_route(
+            "/predictStation",
+            self.predict_station,
             methods=["POST"],
             dependencies=[Depends(self.get_self)],
         )
@@ -90,31 +120,33 @@ class ValidatorProxy:
         if authorization != self.proxy_api_key:
             raise HTTPException(status_code=401, detail="Invalid authorization token")
 
-    def get_proxy_uids(self) -> List[int]:
-        miner_uids: List[int] = self.validator.uid_tracker.get_responding_uids(PROXY_QUERY_K)
+    def get_proxy_uids(self, mechanism: MechanismType) -> List[int]:
+        miner_uids = np.asarray(list(self.validator.uid_tracker.get_responding_uids(mechanism)), dtype=np.int32)
+        inv_ranked_uids = miner_uids[self.validator.metagraph.incentive[miner_uids].argsort()]
+        sel_uids = inv_ranked_uids[-PROXY_QUERY_K:].tolist()
     
-        if len(miner_uids) < PROXY_QUERY_K:
-            to_sample = PROXY_QUERY_K - len(miner_uids)
+        if len(sel_uids) < PROXY_QUERY_K:
+            to_sample = PROXY_QUERY_K - len(sel_uids)
             bt.logging.warning(
                     f"[PROXY] Not enough non-busy recent miners found, sampling {to_sample} additional miners"
             )
-            miner_uids.extend(
+            sel_uids.extend(
                 self.validator.uid_tracker.get_random_uids(
                     k = to_sample,
+                    mechanism=mechanism,
                     tries = 2,
                     sleep = 0.2
                 )
             )
-        return miner_uids
+        return sel_uids
 
-    def weighted_average(self, responses: List[Tuple[int, torch.Tensor]]) -> torch.Tensor:
+    def safe_average(self, responses: List[torch.Tensor], correct_shape: torch.Size) -> torch.Tensor:
+        responses = [r for r in responses if is_valid_response(r, correct_shape)]
         if not responses:
             bt.logging.info(f"[PROXY] Received no valid responses from miners")
             raise HTTPException(status_code=500, detail="No valid response received from miners")
-        
-        ranked_uids, tensors = zip(*responses)
-        # torch lacks this function unfortunately
-        return torch.Tensor(np.average([t.numpy() for t in tensors], weights=ranked_uids, axis=0))
+
+        return torch.stack(responses).mean(dim=0)
 
     async def predict_grid(self, request: Request):
         self.authorize_token(request.headers)
@@ -135,8 +167,8 @@ class ValidatorProxy:
                 min(grid.shape[:2]) >= ERA5_AREA_SAMPLE_RANGE[0] and max(grid.shape[:2]) < ERA5_AREA_SAMPLE_RANGE[1]
             ), f"Area range invalid. With 0.25 degree fidelity, each dimension should be in {ERA5_AREA_SAMPLE_RANGE}"
 
-            start_time, end_time, predict_hours = self._parse_time_inputs(payload)
-            variable_conv = self._parse_variable_input(payload)
+            start_time, end_time, predict_hours = self._parse_time_inputs(payload, MechanismType.ERA5)
+            variable_conv = self._parse_era5_variable(payload)
 
             synapse = TimePredictionSynapse(
                 locations=grid.tolist(),
@@ -153,19 +185,16 @@ class ValidatorProxy:
                 detail=f"Invalid request, parsing failed with error:\n {traceback.format_exc()}",
             )
 
-        # getting responses EAGERLY
-        miner_uids = self.get_proxy_uids()
-        prediction = self.weighted_average(await self.dendrite(
-            uids=miner_uids,
-            metagraph=self.validator.metagraph,
+        miner_uids = self.get_proxy_uids(MechanismType.ERA5)
+        self.validator.uid_tracker.add_busy_uids(miner_uids, MechanismType.ERA5)
+        axons = [self.validator.metagraph.axons[uid] for uid in miner_uids]
+
+        prediction = self.safe_average(await self.dendrite(
+            axons=axons,
             synapse=synapse,
-            timeout=10,
-            filter=partial(
-                is_valid_synapse, 
-                correct_shape=(predict_hours, grid.shape[0], grid.shape[1])
-            )
-        ))
-        self.validator.uid_tracker.mark_finished(miner_uids)
+            timeout=self.PROXY_TIMEOUT,
+        ), correct_shape=(predict_hours, grid.shape[0], grid.shape[1]))
+        self.validator.uid_tracker.mark_finished(miner_uids, MechanismType.ERA5)
         
         bt.logging.info(f"[PROXY] Obtained a valid eager prediction.")
         return self.format_response(
@@ -192,8 +221,8 @@ class ValidatorProxy:
 
             grid = expand_to_grid(lat, lon)
 
-            start_time, end_time, predict_hours = self._parse_time_inputs(payload)
-            variable_conv = self._parse_variable_input(payload)
+            start_time, end_time, predict_hours = self._parse_time_inputs(payload, MechanismType.ERA5)
+            variable_conv = self._parse_era5_variable(payload)
 
             synapse = TimePredictionSynapse(
                 locations=grid.tolist(),
@@ -211,18 +240,17 @@ class ValidatorProxy:
             )
 
         # getting responses
-        miner_uids = self.get_proxy_uids()
-        prediction = self.weighted_average(await self.dendrite(
-            uids=miner_uids,
-            metagraph=self.validator.metagraph,
+        miner_uids = self.get_proxy_uids(MechanismType.ERA5)
+        self.validator.uid_tracker.add_busy_uids(miner_uids, MechanismType.ERA5)
+        axons = [self.validator.metagraph.axons[uid] for uid in miner_uids]
+
+        prediction = self.safe_average(await self.dendrite(
+            axons=axons,
             synapse=synapse,
-            timeout=10,
-            filter=partial(
-                is_valid_synapse, 
-                correct_shape=(predict_hours, grid.shape[0], grid.shape[1])
-            )
-        ))
-        self.validator.uid_tracker.mark_finished(miner_uids)
+            timeout=self.PROXY_TIMEOUT,
+        ), correct_shape=(predict_hours, grid.shape[0], grid.shape[1]))
+
+        self.validator.uid_tracker.mark_finished(miner_uids, MechanismType.ERA5)
         bt.logging.info(f"[PROXY] Obtained a valid eager prediction.")
 
         prediction = interp_coordinates(prediction, grid, lat, lon)
@@ -236,9 +264,68 @@ class ValidatorProxy:
             converter=variable_conv,
         )
 
+    async def predict_station(self, request: Request):
+        self.authorize_token(request.headers)
+        bt.logging.info("[PROXY] Received an organic request!")
 
-    def _parse_time_inputs(self, payload):
-        start_time = payload.get("start_time", get_today("h"))
+        request_start = time.time()
+
+        # catch errors to prevent log spam if API is missused
+        try:
+            payload = await request.json()
+            station_id = payload["station_id"]
+            try:
+                station: Station = self.validator.data_loaders[MechanismType.WEATHER_XM].stations[station_id]
+            except KeyError:
+                raise HTTPException(status_code=400, detail="Station not found")
+            
+            start_time, end_time, predict_hours = self._parse_time_inputs(payload, MechanismType.WEATHER_XM)
+            variable_conv = self._parse_weatherxm_variable(payload)
+
+            synapse = LocalPredictionSynapse(
+                latitude=station.latitude,
+                longitude=station.longitude,
+                elevation=station.elevation,
+                variable=variable_conv.data_var,
+                start_time=start_time.timestamp(),
+                end_time=end_time.timestamp(),
+                requested_hours=predict_hours,
+            )
+
+        except Exception as e:
+            bt.logging.info(f"[PROXY] Organic request was invalid.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid request, parsing failed with error:\n {traceback.format_exc()}",
+            )
+
+        # getting responses
+        miner_uids = self.get_proxy_uids(MechanismType.WEATHER_XM)
+        self.validator.uid_tracker.add_busy_uids(miner_uids, MechanismType.WEATHER_XM)
+        axons = [self.validator.metagraph.axons[uid] for uid in miner_uids]
+
+        prediction = self.safe_average(await self.dendrite(
+            axons=axons,
+            synapse=synapse,
+            timeout=self.PROXY_TIMEOUT,
+        ), correct_shape=(predict_hours, ))
+
+        self.validator.uid_tracker.mark_finished(miner_uids, MechanismType.WEATHER_XM)
+        bt.logging.info(f"[PROXY] Obtained a valid eager prediction.")
+
+        expanded_loc = torch.tensor([station.latitude, station.longitude])[None, None, :]
+        return self.format_response(
+            request_start, 
+            prediction, 
+            expanded_loc, 
+            start_time, 
+            end_time, 
+            converter=variable_conv,
+        )
+
+
+    def _parse_time_inputs(self, payload, mechanism: MechanismType):
+        start_time = payload.get("start_time", get_today("h") + pd.Timedelta(hours=1))
         if isinstance(start_time, str):
             start_time = pd.Timestamp(start_time).floor("h").replace(tzinfo=None)
 
@@ -260,18 +347,27 @@ class ValidatorProxy:
         ), "Prediction hours needs to be an integer between 1 and 24."
 
         start_offset = get_hours(get_today("h"), start_time)
-        assert (
-            start_offset >= LIVE_START_OFFSET_RANGE[0] and start_offset < LIVE_START_OFFSET_RANGE[1]
-        ), "You start time can only be between 5 days in the past up to 7 days in the future"
+        if mechanism == MechanismType.ERA5:
+            assert (
+                start_offset >= ERA5_START_OFFSET_RANGE[0] and start_offset < ERA5_START_OFFSET_RANGE[1]
+            ), "You start time can only be between 5 days in the past up to 7 days in the future"
+        elif mechanism == MechanismType.WEATHER_XM:
+            assert (
+                start_offset >= WEATHERXM_START_OFFSET_RANGE[0] and start_offset < WEATHERXM_START_OFFSET_RANGE[1]
+            ), "You start time can only one hour into the future up to 6 days in the future"
     
         return start_time, end_time, int(predict_hours)
     
-    def _parse_variable_input(self, payload) -> VariableConverter:
+    def _parse_era5_variable(self, payload) -> VariableConverter:
         # default to 2m_temperature for backwards compatibility
         variable_name = payload.get("variable", "2m_temperature")
         assert variable_name in ERA5_DATA_VARS, "This variable is not supported yet!"
-
         return get_converter(variable_name)
+
+    def _parse_weatherxm_variable(self, payload) -> WeatherXMVariable:
+        variable_name = payload.get("variable", "temperature")
+        assert variable_name in WEATHER_XM_DATA_VARS, "This variable is not supported yet!"
+        return get_wxm_variable(variable_name)
 
     def format_response(
             self, 
@@ -280,7 +376,7 @@ class ValidatorProxy:
             location_grid: torch.Tensor,
             start_time: pd.Timestamp,
             end_time: pd.Timestamp,
-            converter: VariableConverter,
+            converter: Union[VariableConverter, WeatherXMVariable],
     ) -> Dict[str, Any]:
         
         timestamps = pd.date_range(
@@ -321,7 +417,7 @@ class ValidatorProxy:
                 }
             }
     
-def is_valid_synapse(response: torch.Tensor, correct_shape: Union[torch.Size, Tuple[int]]) -> bool:
+def is_valid_response(response: torch.Tensor, correct_shape: Union[torch.Size, Tuple[int]]) -> bool:
     if not isinstance(correct_shape, torch.Size):
         correct_shape = torch.Size(correct_shape)
     prediction = help_format_miner_output(correct_shape, response)

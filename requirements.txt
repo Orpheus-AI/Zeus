@@ -1,4 +1,4 @@
-bittensor==9.9.0
+bittensor==9.12.2
 starlette>=0.30.0
 pydantic>=2
 
@@ -21,6 +21,9 @@ tqdm==4.67.1
 dotenv==0.9.9
 
 check_shapes==1.1.1
+pytest>=9.0.0
+pytest-mock>=3.15.0
+pytest-asyncio>=1.3.0
 
 # validators only
 timezonefinder==6.5.8

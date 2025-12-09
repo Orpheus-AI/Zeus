@@ -23,12 +23,14 @@ import typing
 import bittensor as bt
 
 import openmeteo_requests
+import requests
+import h3
 
 import numpy as np
-from zeus.data.converter import get_converter
-from zeus.utils.config import get_device_str
+from zeus.data.era5.converter import get_converter
 from zeus.utils.time import to_timestamp
-from zeus.protocol import TimePredictionSynapse
+from zeus.validator.constants import MechanismType, WEATHERXM_CELL_RESOLUTION
+from zeus.protocol import PreferenceSynapse, TimePredictionSynapse, LocalPredictionSynapse
 from zeus.base.miner import BaseMinerNeuron
 from zeus import __version__ as zeus_version
 
@@ -46,17 +48,38 @@ class Miner(BaseMinerNeuron):
         super(Miner, self).__init__(config=config)
 
         bt.logging.info("Attaching forward functions to miner axon.")
+
+        # Note that the preference synapse decides what you will be queried for,
+        # so you will never have to respond to the other synapse.
         self.axon.attach(
-            forward_fn=self.forward,
-            blacklist_fn=self.blacklist,
-            priority_fn=self.priority,
+            forward_fn=self.forward_preference,
+            blacklist_fn=self.blacklist_preference
+        ).attach(
+            forward_fn=self.forward_era5,
+            blacklist_fn=self.blacklist_era5,
+            priority_fn=self.priority_era5,
+        ).attach(
+            forward_fn=self.forward_weatherxm,
+            blacklist_fn=self.blacklist_weatherxm,
+            priority_fn=self.priority_weatherxm,
         )
-        
-        # TODO(miner): Anything specific to your use case you can do here
-        self.device: torch.device = torch.device(get_device_str())
+
         self.openmeteo_api = openmeteo_requests.Client()
 
-    async def forward(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
+    async def forward_preference(self, synapse: PreferenceSynapse) -> PreferenceSynapse:
+        """
+        Set which mechanism you want to participate in.
+        This is queried every 20 forward cycles.
+
+        Note that validators will only ever set weights for one mechanism at a time,
+        so by switching mechanism you remove all previous incentive from the previous mechanism
+        """
+        # TODO (miner) change this if you want to change mechanism
+        synapse.mechanism = MechanismType.ERA5
+        bt.logging.info(f"Setting preference to {synapse.mechanism.name}!")
+        return synapse
+
+    async def forward_era5(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
         """
         Processes the incoming TimePredictionSynapse for a prediction.
 
@@ -71,7 +94,7 @@ class Miner(BaseMinerNeuron):
         start_time = to_timestamp(synapse.start_time)
         end_time = to_timestamp(synapse.end_time)
         bt.logging.info(
-            f"Received request! Predicting {synapse.requested_hours} hours of {synapse.variable} for grid of shape {coordinates.shape}."
+            f"[ERA5] Received request! Predicting {synapse.requested_hours} hours of {synapse.variable} for grid of shape {coordinates.shape}."
         )
 
         ##########################################################################################################
@@ -108,19 +131,75 @@ class Miner(BaseMinerNeuron):
         # Convert variable(s) to ERA5 units, combines variables for windspeed
         output = converter.om_to_era5(output)
         ##########################################################################################################
-        bt.logging.info(f"Output shape is {output.shape}")
+        bt.logging.info(f"[ERA5] Output shape is {output.shape}")
 
         synapse.predictions = output.tolist()
         synapse.version = zeus_version
         return synapse
     
 
-    async def blacklist(self, synapse: TimePredictionSynapse) -> typing.Tuple[bool, str]:
+    async def forward_weatherxm(self, synapse: LocalPredictionSynapse) -> LocalPredictionSynapse:
+        """
+        Processes the incoming LocalPredictionSynapse for a prediction.
+
+        Args:
+            synapse (LocalPredictionSynapse): The synapse object containing the time range and coordinates
+
+        Returns:
+            LocalPredictionSynapse: The synapse object with the 'predictions' field set".
+        """
+        start_time = to_timestamp(synapse.start_time)
+        end_time = to_timestamp(synapse.end_time)
+        bt.logging.info(
+            f"[WEATHERXM] Received request! Predicting {synapse.requested_hours} hours of {synapse.variable} at lat={synapse.latitude} and lon={synapse.longitude}."
+        )
+        ##########################################################################################################
+        # TODO (miner) you likely want to improve over this baseline of calling OpenMeteo by changing this section
+        h3cell = h3.latlng_to_cell(synapse.latitude, synapse.longitude, res=WEATHERXM_CELL_RESOLUTION)
+        cell_pred = requests.get(
+            f"https://pro.weatherxm.com/api/v1/cells/{h3cell}/forecast/wxmv1",
+            params={
+                "include": "hourly",
+                "from": start_time.strftime("%Y-%m-%d"),
+                "to": end_time.strftime("%Y-%m-%d"),
+            },
+            headers={
+                "X-API-KEY": self.config.weatherxm.api_key
+            }
+        ).json()
+        output = np.concat(
+            [
+                np.asarray(
+                    [
+                        hour_data[synapse.variable]
+                        for hour_data in day['hourly']
+                    ]
+                )
+                for day in cell_pred
+            ],
+        )[start_time.hour : -(23 - end_time.hour)] # slice to requested hours only
+        ##########################################################################################################
+
+        bt.logging.info(f"[WEATHERXM] Output shape is {output.shape}")
+        synapse.predictions = output.tolist()
+        synapse.version = zeus_version
+        return synapse
+    
+
+    async def blacklist_era5(self, synapse: TimePredictionSynapse) -> typing.Tuple[bool, str]:
         return await self._blacklist(synapse)
     
-    async def priority(self, synapse: TimePredictionSynapse) -> float:
+    async def priority_era5(self, synapse: TimePredictionSynapse) -> float:
         return await self._priority(synapse)
     
+    async def blacklist_weatherxm(self, synapse: LocalPredictionSynapse) -> typing.Tuple[bool, str]:
+        return await self._blacklist(synapse)
+    
+    async def priority_weatherxm(self, synapse: LocalPredictionSynapse) -> float:
+        return await self._priority(synapse)
+
+    async def blacklist_preference(self, synapse: PreferenceSynapse) -> typing.Tuple[bool, str]:
+        return await self._blacklist(synapse)
     
 
 # This is the main function, which runs the miner.
@@ -128,4 +207,4 @@ if __name__ == "__main__":
     with Miner() as miner:
         while True:
             bt.logging.info(f"Miner running | uid {miner.uid} | {time.time()}")
-            time.sleep(30)
+            time.sleep(60)

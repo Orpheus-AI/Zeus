@@ -16,6 +16,7 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
+
 from typing import List, Optional, Union
 from traceback import format_exception
 from operator import mul, truediv
@@ -126,13 +127,13 @@ def get_curved_scores(
         min_score: float = None,
 ) -> List[float]:
     """
-    Given a list of raw float scores (can by any range),
+    Given a list of raw float scores (can be any range),
     normalise them to 0-1 scores,
     and apply gamma correction to curve accordingly.
 
     Note that minimal and maximal error can each capped.
      - through the cap_factor (between 0-1), so that:
-       median_score * (1 - cap_factor) <= score <= median_score * (1 + cap_factor),
+       median_score /* cap_factor <= score <= median_score /* cap_factor,
     - Through specifying the min and max artificially
     If neither is specified, will be the actual min/max of the scores,
         which might allow abuse through distribution shifting.
@@ -145,11 +146,11 @@ def get_curved_scores(
         if cap_factor is None:
             # if all better than max, everyone gets perfect score here.
             min_score = min(max_score, min(raw_scores))
-        
-        operator = truediv if max_score > 0 else mul
-        median_bound = operator(np.median(raw_scores), cap_factor)
-        max_bound = operator(max_score, cap_factor)
-        min_score = min(median_bound, max_bound)
+        else:
+            operator = truediv if max_score > 0 else mul
+            median_bound = operator(np.median(raw_scores), cap_factor)
+            max_bound = operator(max_score, cap_factor)
+            min_score = min(median_bound, max_bound)
 
     result = []
     for score in raw_scores:

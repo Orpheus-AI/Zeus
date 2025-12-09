@@ -1,3 +1,22 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from typing import List, Dict, Tuple, Union, Optional
 from pathlib import Path
 import xarray as xr
@@ -13,16 +32,16 @@ import cdsapi
 import pandas as pd
 import bittensor as bt
 
-from zeus.data.loaders.era5_base import Era5BaseLoader
-from zeus.data.sample import Era5Sample
+from zeus.data.era5.loaders.base import Era5BaseLoader
+from zeus.data.era5.sample import Era5Sample
 from zeus.utils.time import get_today, to_timestamp
 from zeus.validator.constants import (
     ERA5_CACHE_DIR,
     COPERNICUS_ERA5_URL,
-    LIVE_HOURS_PREDICT_RANGE,
-    LIVE_START_SAMPLE_STD,
-    LIVE_UNIFORM_START_OFFSET_PROB,
-    LIVE_START_OFFSET_RANGE
+    HOURS_PREDICT_RANGE,
+    ERA5_START_SAMPLE_STD,
+    ERA5_UNIFORM_START_OFFSET_PROB,
+    ERA5_START_OFFSET_RANGE
 )
 
 class Era5CDSLoader(Era5BaseLoader):
@@ -33,9 +52,8 @@ class Era5CDSLoader(Era5BaseLoader):
         self,
         cache_dir: Path = ERA5_CACHE_DIR,
         copernicus_url: str = COPERNICUS_ERA5_URL,
-        start_sample_std: float = LIVE_START_SAMPLE_STD,
-        uniform_start_prob: float = LIVE_UNIFORM_START_OFFSET_PROB,
-        start_offset_range: Tuple[int, int] = LIVE_START_OFFSET_RANGE,
+        start_sample_std: float = ERA5_START_SAMPLE_STD,
+        uniform_start_prob: float = ERA5_UNIFORM_START_OFFSET_PROB,
         **kwargs,
     ) -> None:
         
@@ -55,11 +73,19 @@ class Era5CDSLoader(Era5BaseLoader):
 
         self.start_sample_std = start_sample_std
         self.uniform_start_prob = uniform_start_prob
-        self.start_offset_range = start_offset_range
 
-        super().__init__(predict_sample_range=LIVE_HOURS_PREDICT_RANGE, **kwargs)
+        super().__init__(
+            predict_sample_range=HOURS_PREDICT_RANGE, 
+            start_offset_range=ERA5_START_OFFSET_RANGE, 
+            **kwargs
+        )
 
     def _get_era5_cutoff(self) -> pd.Timestamp:
+        """
+        Get the cutoff timestamp for the ERA5 data, which is 5 days ago on the hour.
+        Returns:
+            pd.Timestamp: The cutoff timestamp.
+        """
         return get_today("h") - pd.Timedelta(days=self.ERA5_DELAY_DAYS)
 
     def is_ready(self) -> bool:
@@ -73,13 +99,21 @@ class Era5CDSLoader(Era5BaseLoader):
             return True
 
         if not self.updater_running:
-            bt.logging.info("ERA5 cache is not up to date, starting updater...")
+            bt.logging.info("[ERA5Loader] ERA5 cache is not up to date, starting updater...")
             self.updater_running = True
             asyncio.get_event_loop() # force loop availability
             asyncio.create_task(self.update_cache())
         return False
     
-    def delete_broken_files(self, files: List[Path]):
+    def delete_broken_files(self, files: List[Path]) -> bool:
+        """
+        Delete broken files from the cache, which is any that cannot be opened,
+         or are missing datapoints.
+        Args:
+            files: List of file paths to check.
+        Returns:
+            bool: True if there are broken files, False otherwise.
+        """
         broken_file = False
         for path in files:
             try:
@@ -93,10 +127,15 @@ class Era5CDSLoader(Era5BaseLoader):
         return broken_file
 
     def load_dataset(self) -> Optional[xr.Dataset]:
+        """
+        Load the dataset from the cache files.
+        Returns:
+            xr.Dataset: The dataset.
+        """
         files = [f for f in self.cache_dir.rglob("*/*.nc")]
 
         if self.delete_broken_files(files=files):
-            bt.logging.warning("Found one or multiple broken .nc files! They will now be redownloaded...")
+            bt.logging.warning("[ERA5Loader] Found one or multiple broken .nc files! They will now be redownloaded...")
             self.last_stored_timestamp = pd.Timestamp(0) # reset so if it fails will trigger re-download
             return
         
@@ -135,21 +174,6 @@ class Era5CDSLoader(Era5BaseLoader):
         end_timestamp = start_timestamp + pd.Timedelta(hours=num_predict_hours - 1)
 
         return start_timestamp, end_timestamp, num_predict_hours
-    
-    def get_relative_age(self, sample: Era5Sample) -> float:
-        """
-        Returns whether a sample involves a past prediction (<-1, 0>),
-        or future prediction (<0, 1>), and by how much,
-        normalised to the bounds of possible start and end times
-        """
-        if sample.end_timestamp < sample.query_timestamp:
-            # past 5 days prediction, note negative in offset_range so flip substraction
-            age = pd.Timedelta(seconds=sample.query_timestamp - sample.start_timestamp)
-            relative_age = age / pd.Timedelta(hours=self.start_offset_range[0])
-        else:
-            age = pd.Timedelta(seconds=sample.end_timestamp - sample.query_timestamp)
-            relative_age = age / pd.Timedelta(hours=self.start_offset_range[1] + self.predict_sample_range[1])
-        return relative_age
 
     def get_sample(self) -> Era5Sample:
         """
@@ -169,10 +193,25 @@ class Era5CDSLoader(Era5BaseLoader):
             variable=self.sample_variable(),
             start_timestamp=start_time.timestamp(),
             end_timestamp=end_time.timestamp(),
-            predict_hours=predict_hours,
+            hours_to_predict=predict_hours,
         )
+    
+    def get_last_available(self) -> pd.Timestamp:
+        """
+        Get the last available timestamp for the ERA5 data.
+        Returns:
+            pd.Timestamp: The last available timestamp.
+        """
+        return self.last_stored_timestamp
 
     def get_output(self, sample: Era5Sample) -> Optional[torch.Tensor]:
+        """
+        Get the output for a sample.
+        Args:
+            sample: The sample to get the output for.
+        Returns:
+            Optional[torch.Tensor]: The output data (if available). Shape: (time, lat, lon).
+        """
         end_time = to_timestamp(sample.end_timestamp)
         if end_time > self.last_stored_timestamp:
             return None
@@ -187,6 +226,9 @@ class Era5CDSLoader(Era5BaseLoader):
         return data4d[..., 2:].squeeze(dim=-1)
 
     def get_file_name(self, variable: str, timestamp: pd.Timestamp) -> str:
+        """
+        Get the file name for a variable and timestamp.
+        """
         return os.path.join(self.cache_dir, variable, f"era5_{timestamp.strftime('%Y-%m-%d')}.nc")
 
     def download_era5_day(self, variable: str, timestamp: pd.Timestamp):
@@ -237,7 +279,7 @@ class Era5CDSLoader(Era5BaseLoader):
             )
 
             bt.logging.info(
-                f"Downloaded {variable} ERA5 data for {timestamp.strftime('%Y-%m-%d')} to {filename}"
+                f"[ERA5Loader] Downloaded {variable} ERA5 data for {timestamp.strftime('%Y-%m-%d')} to {filename}"
             )
         except Exception as e:
             # Most errors can occur and should continue, but force validators to authenticate.
@@ -247,10 +289,13 @@ class Era5CDSLoader(Era5BaseLoader):
                 )
             else:
                 bt.logging.error(
-                    f"Failed to download {variable} ERA5 data for {timestamp.strftime('%Y-%m-%d')}: {e}"
+                    f"[ERA5Loader] Failed to download {variable} ERA5 data for {timestamp.strftime('%Y-%m-%d')}: {e}"
                 )
 
     async def update_cache(self):
+        """
+        Update the cache by downloading the latest ERA5 data asynchronously.
+        """
         current_day = get_today("D")
         tasks = []
         expected_files = set()
@@ -271,7 +316,7 @@ class Era5CDSLoader(Era5BaseLoader):
             await asyncio.gather(*tasks)
             self.dataset = self.preprocess_dataset(self.load_dataset())
             assert self.is_ready()
-            bt.logging.info("Successfully updated cache -- ready to send challenges!")
+            bt.logging.info("[ERA5Loader] Successfully updated cache -- ready to send challenges!")
 
             # remove any old cache.
             for file in self.cache_dir.rglob("*.nc"):
@@ -279,6 +324,6 @@ class Era5CDSLoader(Era5BaseLoader):
                     file.unlink(missing_ok=True)
 
         except Exception as err:
-            bt.logging.error(f"ERA5 cache update failed! {''.join(format_exception(type(err), err, err.__traceback__))}")
+            bt.logging.error(f"[ERA5Loader] ERA5 cache update failed! {''.join(format_exception(type(err), err, err.__traceback__))}")
         finally:
             self.updater_running = False

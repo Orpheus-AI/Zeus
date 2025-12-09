@@ -31,11 +31,13 @@ from zeus.validator.uid_tracker import UIDTracker
 from zeus.api.proxy import ValidatorProxy
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.validator.forward import forward
-from zeus.data.loaders.era5_cds import Era5CDSLoader
-from zeus.data.loaders.openmeteo import OpenMeteoLoader
-from zeus.data.difficulty_loader import DifficultyLoader
+from zeus.data.era5.loaders.cds import Era5CDSLoader
+from zeus.data.era5.openmeteo import OpenMeteoLoader
+from zeus.data.weatherxm.loader import WeatherXMLoader
+from zeus.data.difficulty import DifficultyLoader
 from zeus.validator.database import ResponseDatabase
 from zeus.validator.constants import (
+    MechanismType,
     TESTNET_UID,
 )
 
@@ -44,22 +46,26 @@ class Validator(BaseValidatorNeuron):
 
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
-        self.load_state()
-
         load_dotenv(
             os.path.join(os.path.abspath(os.path.dirname(__file__)), "../validator.env")
         )
         self.discord_hook = os.environ.get("DISCORD_WEBHOOK")
 
-        self.uid_tracker = UIDTracker(self)
+        self.uid_tracker = UIDTracker(self, self.preference_manager)
         self.validator_proxy = ValidatorProxy(self)
 
         bt.logging.info("Initialising data loaders...")
-        self.cds_loader = Era5CDSLoader()
-        self.open_meteo_loader = OpenMeteoLoader()
+        self.data_loaders = {
+            MechanismType.ERA5: Era5CDSLoader(),
+            MechanismType.WEATHER_XM: WeatherXMLoader()
+        }
+        self.baseline_loaders = {
+            MechanismType.ERA5: OpenMeteoLoader(),
+            MechanismType.WEATHER_XM: self.data_loaders[MechanismType.WEATHER_XM]
+        }
         bt.logging.info("Finished setting up data loaders.")
 
-        self.database = ResponseDatabase(self.cds_loader)
+        self.database = ResponseDatabase()
         self.difficulty_loader = DifficultyLoader()
         self.init_wandb()
 
@@ -75,6 +81,7 @@ class Validator(BaseValidatorNeuron):
         return await forward(self)
     
     def prune_hotkeys(self, hotkeys):
+        super().prune_hotkeys()
         if self.is_running: # make sure init is finalised
             self.database.prune_hotkeys(hotkeys)
     

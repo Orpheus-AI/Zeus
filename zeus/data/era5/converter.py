@@ -1,3 +1,22 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Union, Any, Callable, List
@@ -14,7 +33,7 @@ class VariableConverter(ABC):
     """
 
     # their main ERA5 representation, used as key throughout
-    data_var: str 
+    data_var: str
 
     # OpenMeteo variable name
     om_name: Union[str, List[str]]
@@ -67,10 +86,10 @@ class WindConverter(VariableConverter, ABC):
             "wind speed 100m", "wind direction 100m"
         returns: array/tensor of eastern winds, with shape excluding last dimension
         """
-        Vs = data[..., torch.arange(0, data.shape[-1], 2)]
-        Vs *= 1000 / 3600 # km/h to m/s
+        Vs = data[..., ::2]
+        Vs = Vs * (1000 / 3600)  # km/h to m/s
 
-        phis = np.deg2rad(data[..., torch.arange(1, data.shape[-1], 2)])
+        phis = np.deg2rad(data[..., 1::2])
      
         component = - Vs * trigeometry(phis)
         # legacy mean but also squeezes

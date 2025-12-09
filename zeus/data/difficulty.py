@@ -1,3 +1,22 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 import pathlib
 import os
 import re
@@ -5,7 +24,7 @@ import bittensor as bt
 import numpy as np
 from datetime import datetime
 
-from zeus.data.sample import Era5Sample
+from zeus.data.base.sample import BaseSample
 from zeus.utils.coordinates import get_bbox, slice_bbox
 
 
@@ -36,7 +55,7 @@ class DifficultyLoader:
                 f"No difficulty matrices found in {data_folder}, scoring cannot be calculated!"
             )
 
-    def get_difficulty_grid(self, sample: Era5Sample) -> np.ndarray:
+    def get_difficulty_grid(self, sample: BaseSample) -> np.ndarray:
         """
         Returns the difficulties for each grid location in the given sample.
         """

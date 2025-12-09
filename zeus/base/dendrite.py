@@ -1,3 +1,22 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from typing import Union, Any, AsyncGenerator, Dict, Tuple, List, Awaitable, TypeVar
 T = TypeVar("T")
 import time
@@ -18,17 +37,18 @@ class ZeusDendrite(bt.Dendrite):
     as opposed to a multi-second (3+) delay between the first and last miner.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # just do this once initially
-        connector = aiohttp.TCPConnector(
-            limit=200, 
-            verify_ssl=False, 
-            loop=asyncio.get_event_loop(),
-            limit_per_host=125,
+    @property
+    async def session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            # Set this in async context
+            self._session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    limit=200, 
+                    ssl=False,
+                    limit_per_host=125,
+                )
             )
-        self._session = aiohttp.ClientSession(connector=connector)
-        self.semaphore = asyncio.Semaphore(10)
+        return self._session
 
     async def forward(
         self,
@@ -37,6 +57,7 @@ class ZeusDendrite(bt.Dendrite):
         timeout: float = 12,
         deserialize: bool = True,
         run_async: bool = True,
+        semaphore: int = 10,
     ) -> list[Union[AsyncGenerator[Any, Any], bt.Synapse, bt.StreamingSynapse]]:
         """
         Modified forward call to decompose request creation and sending,
@@ -77,7 +98,7 @@ class ZeusDendrite(bt.Dendrite):
             # actually execute the calls, internal timing starts here
             return await gather_func(
                 *[
-                    self.call(post_args=post_args, synapse=synapse, deserialize=deserialize) 
+                    self.call(post_args=post_args, synapse=synapse, deserialize=deserialize, semaphore=semaphore) 
                     for (synapse, post_args) in calls
                 ]
             )
@@ -127,6 +148,7 @@ class ZeusDendrite(bt.Dendrite):
         post_args: Dict[str, Any],
         synapse: bt.Synapse,
         deserialize: bool = True,
+        semaphore: int = 10,
     ) -> bt.Synapse:
         """
         Second half of default BitTensor dendrite.call function.
@@ -135,7 +157,7 @@ class ZeusDendrite(bt.Dendrite):
         Returns:
         - Synapse or deserialisation result
         """
-        async with self.semaphore:
+        async with asyncio.Semaphore(semaphore):
             # Record start time
             start_time = time.time()
 

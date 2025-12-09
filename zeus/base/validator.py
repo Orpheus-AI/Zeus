@@ -16,6 +16,7 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
+
 import os
 import copy
 import sys
@@ -25,19 +26,23 @@ import argparse
 import threading
 import bittensor as bt
 from abc import abstractmethod
+from check_shapes import check_shapes
 
-from typing import List, Union
+from typing import List, Union, Dict
 from traceback import format_exception
 
 from zeus.base.dendrite import ZeusDendrite
 from zeus.base.neuron import BaseNeuron
-from zeus.utils.uids import check_uid_availability
+from zeus.utils.uids import get_uids
 from zeus.base.utils.weight_utils import (
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
 )
+from zeus.utils.misc import copy_fitting
 from zeus.utils.config import add_validator_args
-from zeus.validator.constants import MAINNET_UID
+from zeus.base.metagraph.mechagraph import Mechagraph
+from zeus.validator.constants import MechanismType
+from zeus.validator.preference import PreferenceManager
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -65,17 +70,15 @@ class BaseValidatorNeuron(BaseNeuron):
         self.dendrite = ZeusDendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
+        self.mechagraphs: Dict[MechanismType, Mechagraph] = {
+            sg.mechanism: sg for sg in self.metagraph.mechagraphs
+        }
+        assert self.metagraph.max_uids >= sum([sg.size for sg in self.mechagraphs.values()]), \
+            "Sum of mechanism sizes exceeds max_uids in metagraph."
+
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
-        self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
-        # if we have saved scores, load them.
-        self.score_history_path = os.path.join(
-            self.config.neuron.full_path, "scores.npy"
-        )
-        if os.path.exists(self.score_history_path):
-            history_scores = np.load(self.score_history_path)
-            self.scores[: len(history_scores)] = history_scores
-            bt.logging.info("Loaded scores from history.")
+        self.scores = np.zeros((self.metagraph.n, len(self.mechagraphs)), dtype=np.float32)
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -83,7 +86,10 @@ class BaseValidatorNeuron(BaseNeuron):
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
 
-        # Init sync with the network. Updates the metagraph.
+        self.preference_manager = PreferenceManager(self.metagraph.n)
+        # NOTE: load before sync tries to save -- bug in BT template
+        self.load_state()
+        # Init sync with the network. Updates the metagraph
         self.sync()
 
         # Serve axon to enable external connections.
@@ -232,11 +238,44 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def set_weights(self):
         """
-        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. 
+        The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        """
+
+        vali_or_nonserve_uids = get_uids(
+            metagraph=self.metagraph,
+            vpermit_tao_limit=self.config.neuron.vpermit_tao_limit,
+            miners=False,
+        )
+
+        # Set weights for each mechanism separately.
+        for mtype, mechagraph in self.mechagraphs.items():
+            bt.logging.info(f"Setting weights for mechanism: {mtype.name}")
+            mech_scores = self.scores[:, mtype.value].copy()
+            # validators or non-serve always zero
+            mech_scores[vali_or_nonserve_uids] = 0.
+
+            # apply preference 
+            pref_mask = self.preference_manager.get_preferences() == mtype.value
+            mech_scores = mech_scores * pref_mask
+
+            # keep only miners that actually fit according to Mechagraph size
+            top_miners = np.argsort(mech_scores)[-mechagraph.size:]
+            bt.logging.info(f"Scored miners for {mtype.name}: {top_miners}")
+            top_mech_scores = np.zeros_like(mech_scores)
+            top_mech_scores[top_miners] = mech_scores[top_miners]
+
+            self._set_weights_for_mechanism(mtype, top_mech_scores)
+
+    @check_shapes("mech_scores: [n]")
+    def _set_weights_for_mechanism(self, mechanism: MechanismType, mech_scores: np.ndarray):
+        """
+        Sets the validator weights to the metagraph hotkeys based on the specific mech_scores
+        Almost identical from template, but specifying mechanism ID for multi-mechanism support.
         """
 
         # Check if self.scores contains any NaN values and log a warning if it does.
-        if np.isnan(self.scores).any():
+        if np.isnan(mech_scores).any():
             bt.logging.warning(
                 f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
@@ -244,17 +283,17 @@ class BaseValidatorNeuron(BaseNeuron):
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
         # Compute the norm of the scores
-        norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+        norm = np.linalg.norm(mech_scores, ord=1, axis=0, keepdims=True)
 
         # Check if the norm is zero or contains NaN values
         if np.any(norm == 0) or np.isnan(norm).any():
             norm = np.ones_like(norm)  # Avoid division by zero or NaN
         
         # Compute raw_weights safely
-        raw_weights = self.scores / norm
+        raw_weights = mech_scores / norm
 
-        bt.logging.debug("raw_weights", raw_weights)
-        bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
+        bt.logging.debug(f"[{mechanism.name}] raw_weights", raw_weights)
+        bt.logging.debug(f"[{mechanism.name}] raw_weight_uids", str(self.metagraph.uids.tolist()))
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,
@@ -266,8 +305,8 @@ class BaseValidatorNeuron(BaseNeuron):
             subtensor=self.subtensor,
             metagraph=self.metagraph,
         )
-        bt.logging.debug("processed_weights", processed_weights)
-        bt.logging.debug("processed_weight_uids", processed_weight_uids)
+        bt.logging.debug(f"[{mechanism.name}] processed_weights", processed_weights)
+        bt.logging.debug(f"[{mechanism.name}] processed_weight_uids", processed_weight_uids)
 
         # Convert to uint16 weights and uids.
         (
@@ -276,8 +315,8 @@ class BaseValidatorNeuron(BaseNeuron):
         ) = convert_weights_and_uids_for_emit(
             uids=processed_weight_uids, weights=processed_weights
         )
-        bt.logging.debug("uint_weights", uint_weights)
-        bt.logging.debug("uint_uids", uint_uids)
+        bt.logging.debug(f"[{mechanism.name}] uint_weights", uint_weights)
+        bt.logging.debug(f"[{mechanism.name}] uint_uids", uint_uids)
 
         # Set the weights on chain via our subtensor connection.
         result, msg = self.subtensor.set_weights(
@@ -288,11 +327,12 @@ class BaseValidatorNeuron(BaseNeuron):
             wait_for_finalization=True, # make potential issues visible
             wait_for_inclusion=False,
             version_key=self.spec_version,
+            mechid=mechanism.value,
         )
         if result is True:
-            bt.logging.info("set_weights on chain successfully!")
+            bt.logging.info(f"[{mechanism.name}] set_weights on chain successfully!")
         else:
-            bt.logging.error("set_weights failed", msg)
+            bt.logging.error(f"[{mechanism.name}] set_weights failed", msg)
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
@@ -320,25 +360,24 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
-        if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            # Update the size of the moving average scores.
-            new_moving_average = np.zeros((self.metagraph.n))
-            min_len = min(len(self.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
-            self.scores = new_moving_average
+        if len(self.hotkeys) != len(self.metagraph.hotkeys):
+            empty_scores = np.zeros((self.metagraph.n, len(self.mechagraphs)), dtype=np.float32)
+            self.scores = copy_fitting(self.scores, empty_scores)
+            
+            self.preference_manager.reshape_preferences(new_size=len(self.scores))
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
         self.prune_hotkeys(hotkeys_to_prune)
 
-    @abstractmethod
     def prune_hotkeys(self, hotkeys: List[str]):
         """
         Prune data for hotkeys that got changed for their uid.
         """
-        pass
+        prune_uids = [n.uid for n in self.metagraph.neurons if n.hotkey in hotkeys]
+        self.preference_manager.mark_for_query(prune_uids)
 
-    def update_scores(self, rewards: np.ndarray, uids: List[int]):
+    def update_scores(self, rewards: np.ndarray, uids: List[int], mechanism: MechanismType):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
 
         # Check if rewards contains NaN values.
@@ -372,16 +411,7 @@ class BaseValidatorNeuron(BaseNeuron):
             )
 
         # Compute forward pass rewards, assumes uids are mutually exclusive.
-        scattered_rewards: np.ndarray = self.scores.copy()
-        vali_or_nonserve_uids = [
-            uid for uid in range(len(scattered_rewards)) if
-            not check_uid_availability(
-                metagraph=self.metagraph, 
-                uid=uid,
-                vpermit_tao_limit=self.config.neuron.vpermit_tao_limit,
-                mainnet_uid=MAINNET_UID
-            )
-        ]
+        scattered_rewards: np.ndarray = self.scores[:, mechanism.value].copy()
         scattered_rewards[uids_array] = rewards
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
@@ -401,9 +431,8 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.debug(f"Adjusting moving average alphas: {alphas}")
 
         # Update scores with rewards produced by this step.
-        self.scores: np.ndarray = alphas * scattered_rewards + (1 - alphas) * self.scores
-        self.scores[vali_or_nonserve_uids] = 0.
-        np.save(self.score_history_path, self.scores)
+        self.scores[:, mechanism.value] = alphas * scattered_rewards + (1 - alphas) * self.scores[:, mechanism.value]
+        #np.save(self.score_history_path, self.scores)
 
     def save_state(self):
         """Saves the state of the validator to a file."""
@@ -415,6 +444,7 @@ class BaseValidatorNeuron(BaseNeuron):
             step=self.step,
             scores=self.scores,
             hotkeys=self.hotkeys,
+            preferences=self.preference_manager.get_preferences()
         )
 
     def load_state(self):
@@ -422,7 +452,17 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Loading validator state.")
 
         # Load the state of the validator from file.
-        state = np.load(self.config.neuron.full_path + "/state.npz")
+        path = self.config.neuron.full_path + "/state.npz"
+        if not os.path.exists(path):
+            bt.logging.info("No saved state found, starting fresh.")
+            return
+        
+        state = np.load(path)
+
         self.step = state["step"]
-        self.scores = state["scores"]
-        self.hotkeys = state["hotkeys"]
+        # allow for potential reshaping, including addition of mechanisms
+        self.scores = copy_fitting(state["scores"], self.scores)
+        self.hotkeys = copy_fitting(state["hotkeys"], np.array(self.hotkeys))
+
+        if "preferences" in state:
+            self.preference_manager.load_preferences(state["preferences"])

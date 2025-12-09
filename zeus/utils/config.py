@@ -22,6 +22,7 @@ import argparse
 import bittensor as bt
 import torch
 from .logging import setup_events_logger
+from zeus.validator.constants import VPERMIT_TAO_LIMIT
 
 
 def get_device_str() -> str:
@@ -134,6 +135,13 @@ def add_miner_args(cls, parser):
     )
 
     parser.add_argument(
+        "--weatherxm.api_key",
+        type=str,
+        help="API Key for WeatherXM requests. If not set, you cannot participate in local challenges.",
+        default=None,
+    )
+
+    parser.add_argument(
         "--blacklist.minimal_alpha_stake",
         type=int,
         help="Only respond to requests from validators with an alpha stake above this value.",
@@ -214,7 +222,7 @@ def add_validator_args(cls, parser):
         "--neuron.vpermit_tao_limit",
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
-        default=4096,
+        default=VPERMIT_TAO_LIMIT,
     )
 
     parser.add_argument(

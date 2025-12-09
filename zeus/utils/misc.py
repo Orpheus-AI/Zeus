@@ -15,14 +15,40 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
+
 import time
 import math
 from math import floor
 from typing import Callable, Any, Union, Iterable, Tuple, List, TypeVar
 import numpy as np
+import torch
 from functools import lru_cache, update_wrapper
 
 from zeus import __version__ as zeus_version
+
+def copy_fitting(
+    src: Union[np.ndarray, torch.Tensor], 
+    dest: Union[np.ndarray, torch.Tensor]
+) -> Union[np.ndarray, torch.Tensor]:
+    """
+    Copy src array into dest array, fitting as necessary.
+    If dest has more dimensions than src, src is reshaped to match.
+
+    For each dimension:
+        If src dimension is larger than dest, truncates.
+        If src is smaller than dest, only copy up to src size.
+    Returns
+     - dest.
+    """
+    assert dest.ndim >= src.ndim, "Destination must have equal or more dimensions than source."
+    
+    if dest.ndim > src.ndim:
+        src = src.reshape(*src.shape, *np.ones(dest.ndim - src.ndim, dtype=int))
+
+    slices = [slice(0, min(src.shape[i], dest.shape[i])) for i in range(dest.ndim)]
+    dest[tuple(slices)] = src[tuple(slices)]
+    return dest
+
 
 T = TypeVar('T')
 def split_list(items: Iterable[T], filter: Callable[[T], bool]) -> Tuple[List[T], List[T]]:
@@ -36,14 +62,6 @@ def split_list(items: Iterable[T], filter: Callable[[T], bool]) -> Tuple[List[T]
         (b, a)[filter(x)].append(x)
 
     return a, b
-
-
-def celcius_to_kelvin(data: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-    return data + 273.15
-
-
-def kelvin_to_celcius(data: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-    return data - 273.15
 
 def is_updated(version_str: str) -> bool:
     """

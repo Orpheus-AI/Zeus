@@ -18,11 +18,32 @@
 # DEALINGS IN THE SOFTWARE.
 
 from abc import ABC
+from pydantic import Field
+from typing import List, Tuple, Optional
+
 import bittensor as bt
 import torch
 
-from pydantic import Field
-from typing import List, Tuple
+from zeus.validator.constants import MechanismType
+from zeus import __version__ as zeus_version
+
+
+class PreferenceSynapse(bt.Synapse):
+    """
+    A protocol representation which allows miners to define their preferred challenge,
+    this is send to all miners at fixed intervals so they can change preference whenever desired.
+
+    Note that you can only participate in one mechanic at a time, enforced by the validator.
+    """
+    mechanism: Optional[MechanismType] = Field(
+        title="Preferred mechanism",
+        description="Miners can only participate in one mechanism at a time. Please set it here.",
+        default=None,
+        frozen=False
+    )
+
+    def deserialize(self) -> MechanismType:
+        return self.mechanism
 
 
 class PredictionSynapse(bt.Synapse, ABC):
@@ -35,8 +56,8 @@ class PredictionSynapse(bt.Synapse, ABC):
     version: str = Field(
         title="Validator/Miner codebase version",
         description="Version matches the version-string of the SENDER, either validator or miner",
-        default = "",
-        frozen = False,
+        default=zeus_version,
+        frozen=False,
     )
 
     requested_hours: int = Field(
@@ -46,19 +67,17 @@ class PredictionSynapse(bt.Synapse, ABC):
         frozen=True,
     )
 
-    # Optional request output, filled by receiving axon.
-    predictions: List[List[List[float]]] = Field(
-        title="Prediction",
-        description="The output tensor to be scored.",
-        default=[],
-        frozen=False,
+    start_time: float = Field(
+        title="start timestamp",
+        description="Starting timestamp in GMT+0 as a float",
+        default=0.0,
+        frozen=True,
     )
 
-    # See https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation#ERA5:datadocumentation-Parameterlistings
-    variable: str = Field(
-        title="ERA5 variable you are asked to predict",
-        description="Each request concerns a single CDS variable in long underscored form",
-        default="2m_temperature",
+    end_time: float = Field(
+        title="end timestamp",
+        description="Ending timestamp in GMT+0 as a float",
+        default=0.0,
         frozen=True,
     )
 
@@ -86,16 +105,63 @@ class TimePredictionSynapse(PredictionSynapse):
         frozen=True,
     )
 
-    start_time: float = Field(
-        title="start timestamp",
-        description="Starting timestamp in GMT+0 as a float",
+    # Optional request output, filled by receiving axon.
+    predictions: List[List[List[float]]] = Field(
+        title="Prediction",
+        description="The output tensor to be scored.",
+        default=[],
+        frozen=False,
+    )
+
+    # See https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation#ERA5:datadocumentation-Parameterlistings
+    variable: str = Field(
+        title="ERA5 variable you are asked to predict",
+        description="Each request concerns a single CDS variable in long underscored form",
+        default="2m_temperature",
+        frozen=True,
+    )
+
+
+class LocalPredictionSynapse(PredictionSynapse):
+    """
+    Used for hyperlocal WeatherXM based forecasting.
+    """
+
+    latitude: float = Field(
+        title="Latitude",
+        description="Latitude you are asked to predict at.",
         default=0.0,
         frozen=True,
     )
 
-    end_time: float = Field(
-        title="end timestamp",
-        description="Ending timestamp in GMT+0 as a float",
+    longitude: float = Field(
+        title="Longitude",
+        description="Longitude you are asked to predict at.",
         default=0.0,
         frozen=True,
     )
+
+    elevation: float = Field(
+        title="elevation",
+        description="Elevation at station height.",
+        default=0.0,
+        frozen=True,
+    )
+
+    # Optional request output, filled by receiving axon.
+    predictions: List[float] = Field(
+        title="Prediction",
+        description="The output list to be scored.",
+        default=[],
+        frozen=False,
+    )
+
+    variable: str = Field(
+        title="WeatherXM variable you are asked to predict",
+        description="Each request concerns a single variable",
+        default="temperature",
+        frozen=True,
+    )
+
+
+

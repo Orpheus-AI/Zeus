@@ -20,6 +20,7 @@ pm2 start neurons/miner.py --name $MINER_PROCESS_NAME -- \
   --wallet.hotkey $WALLET_HOTKEY \
   --axon.port $AXON_PORT \
   --blacklist.force_validator_permit $BLACKLIST_FORCE_VALIDATOR_PERMIT \
+  --weatherxm.api_key $WEATHERXM_API_KEY \
   --logging.info
 
 # synchronise the process list with the pm2 ecosystem file

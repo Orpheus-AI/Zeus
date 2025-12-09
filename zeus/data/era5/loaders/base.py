@@ -1,3 +1,22 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 from typing import Tuple, Optional, List, Union, Dict
 from abc import ABC, abstractmethod
 import xarray as xr
@@ -5,8 +24,10 @@ import numpy as np
 import torch
 import pandas as pd
 
-from zeus.data.sample import Era5Sample
-from zeus.data.converter import get_converter
+from zeus.data.base.loader import BaseDataLoader
+from zeus.data.era5.sample import Era5Sample
+from zeus.data.era5.converter import get_converter
+from zeus.validator.constants import MechanismType
 from zeus.validator.constants import (
     ERA5_DATA_VARS,
     ERA5_LATITUDE_RANGE,
@@ -15,33 +36,43 @@ from zeus.validator.constants import (
 )
 
 
-class Era5BaseLoader(ABC):
+class Era5BaseLoader(BaseDataLoader):
+
+    # Set parent class attributes
+    mechanism = MechanismType.ERA5
+    sample_cls = Era5Sample
 
     def __init__(
         self,
-        predict_sample_range: Tuple[float, float],
-        data_vars: Dict[str, float] = ERA5_DATA_VARS,
         lat_range: Tuple[float, float] = ERA5_LATITUDE_RANGE,
         lon_range: Tuple[float, float] = ERA5_LONGITUDE_RANGE,
-        area_sample_range: Tuple[ float, float] = ERA5_AREA_SAMPLE_RANGE
+        area_sample_range: Tuple[ float, float] = ERA5_AREA_SAMPLE_RANGE,
+        **kwargs,
 
     ) -> None:
-        self.data_vars, self.data_var_probs = zip(*sorted(data_vars.items()))
-        self.data_var_probs = np.array(self.data_var_probs)
-        
+        super().__init__(data_vars=ERA5_DATA_VARS,**kwargs)
         self.lat_range = sorted(lat_range)
         self.lon_range = sorted(lon_range)
 
         self.area_sample_range = sorted(area_sample_range)
-        self.predict_sample_range = sorted(predict_sample_range)
 
         self.dataset = self.preprocess_dataset(self.load_dataset())
 
     @abstractmethod
     def load_dataset(self, **kwargs) -> xr.Dataset:
+        """
+        Load the dataset from the source.
+        Returns:
+            xr.Dataset: The dataset.
+        """
         pass
 
-    def preprocess_dataset(self, dataset: Optional[xr.Dataset]) -> xr.Dataset:
+    def preprocess_dataset(self, dataset: Optional[xr.Dataset]) -> Optional[xr.Dataset]:
+        """
+        Preprocess the dataset to ensure the coordinates are (-90, 90) and (-180, 180) for latitude and longitude respectively.
+        Returns:
+            xr.Dataset: The preprocessed dataset or None if the dataset is not loaded.
+        """
         # ensure the coordinates are (-90, 90) and (-180, 180) for latitude and longitude respectively.
         if dataset is None:
             return None
@@ -87,10 +118,6 @@ class Era5BaseLoader(ABC):
         )
         lon_end = lon_start + np.random.randint(*self.area_sample_range) / fidelity
         return lat_start, lat_end, lon_start, lon_end
-    
-    def sample_variable(self) -> str:
-        norm_probs = self.data_var_probs / self.data_var_probs.sum()
-        return np.random.choice(self.data_vars, p=norm_probs)
 
     def get_data(
         self,
@@ -151,8 +178,20 @@ class Era5BaseLoader(ABC):
 
     @abstractmethod
     def sample_time_range(self) -> Tuple[pd.Timestamp, pd.Timestamp, int]:
+        """
+        Sample a time range for a sample.
+        Returns:
+            pd.Timestamp: The start timestamp.
+            pd.Timestamp: The end timestamp.
+            int: The number of predict hours.
+        """
         pass
 
     @abstractmethod
     def get_sample(self) -> Era5Sample:
+        """
+        Get a sample from the dataset.
+        Returns:
+            Era5Sample: The sample.
+        """
         pass

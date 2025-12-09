@@ -1,5 +1,7 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
+# developer: Eric (Ørpheus A.I.)
+# Copyright © 2025 Ørpheus A.I.
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -25,6 +27,7 @@ from abc import ABC, abstractmethod
 # Sync calls set weights and also resyncs the metagraph.
 from zeus.utils.config import check_config, add_args, config
 from zeus.utils.misc import ttl_get_block
+from zeus.base.metagraph.delegate import MetagraphDelegate
 from zeus import __spec_version__ as spec_version
 
 class BaseNeuron(ABC):
@@ -50,7 +53,7 @@ class BaseNeuron(ABC):
 
     subtensor: "bt.subtensor"
     wallet: "bt.wallet"
-    metagraph: "bt.metagraph"
+    metagraph: MetagraphDelegate
     spec_version: int = spec_version
 
     @property
@@ -84,7 +87,10 @@ class BaseNeuron(ABC):
         else:
             self.wallet = bt.wallet(config=self.config)
             self.subtensor = bt.subtensor(config=self.config)
-            self.metagraph = self.subtensor.metagraph(self.config.netuid)
+            self.metagraph = MetagraphDelegate(
+                netuid=self.config.netuid,
+                subtensor=self.subtensor
+            )
 
         bt.logging.info(f"Wallet: {self.wallet}")
         bt.logging.info(f"Subtensor: {self.subtensor}")
