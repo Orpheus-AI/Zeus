@@ -43,6 +43,11 @@ class BaseMinerNeuron(BaseNeuron):
 
     def __init__(self, config=None):
         super().__init__(config=config)
+        self.load_state()
+        bt.logging.info(f"Loaded neuron state: step={self.step}")
+        bt.logging.info(f"Loaded neuron state: block={self.block}")
+        bt.logging.info(f"Loaded neuron state: uid={self.uid}")
+        bt.logging.info(f"Loaded neuron state: spec_version={self.spec_version}")
 
         # Warn if allowing incoming requests from anyone.
         if not self.config.blacklist.force_validator_permit:
