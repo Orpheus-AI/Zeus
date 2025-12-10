@@ -17,6 +17,8 @@
 
 import copy
 import typing
+import os
+import numpy as np
 
 import bittensor as bt
 
@@ -154,11 +156,59 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
 
     def save_state(self):
-        bt.logging.trace(
-            "save_state() not implemented for this neuron. You can implement this function to save model checkpoints or other useful data."
-        )
+        # bt.logging.trace(
+        #     "save_state() not implemented for this neuron. You can implement this function to save model checkpoints or other useful data."
+        # )
+        try:
+            state_path = os.path.join(self.config.neuron.full_path, "state.npz")
+            
+            # Get current block number (handle potential errors)
+            try:
+                current_block = int(self.block)
+            except (AttributeError, TypeError):
+                current_block = 0
+            
+            # Save the state of the neuron to file
+            np.savez(
+                state_path,
+                step=self.step,
+                block=current_block,
+                uid=self.uid,
+                spec_version=self.spec_version,
+            )
+            bt.logging.debug(f"Saved neuron state: step={self.step}, block={current_block}")
+        except Exception as e:
+            bt.logging.warning(f"Failed to save neuron state: {e}")
 
     def load_state(self):
-        bt.logging.trace(
-            "load_state() not implemented for this neuron. You can implement this function to load model checkpoints or other useful data."
-        )
+        # bt.logging.trace(
+        #     "load_state() not implemented for this neuron. You can implement this function to load model checkpoints or other useful data."
+        # )
+        try:
+            state_path = os.path.join(self.config.neuron.full_path, "state.npz")
+            
+            if not os.path.exists(state_path):
+                bt.logging.info("No saved state found. Starting with fresh state.")
+                return
+            
+            # Load the state of the neuron from file
+            state = np.load(state_path, allow_pickle=True)
+            
+            # Restore step if it exists
+            if "step" in state:
+                self.step = int(state["step"])
+                bt.logging.info(f"Loaded neuron state: step={self.step}")
+            
+            # Log other saved state information
+            if "block" in state:
+                saved_block = int(state["block"])
+                bt.logging.debug(f"Last saved block: {saved_block}")
+            
+            if "spec_version" in state:
+                saved_spec_version = int(state["spec_version"])
+                if saved_spec_version != self.spec_version:
+                    bt.logging.warning(
+                        f"Spec version mismatch: saved={saved_spec_version}, current={self.spec_version}"
+                    )
+        except Exception as e:
+            bt.logging.warning(f"Failed to load neuron state: {e}. Starting with fresh state.")
