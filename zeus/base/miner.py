@@ -194,10 +194,7 @@ class BaseMinerNeuron(BaseNeuron):
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
 
-
-    async def _blacklist(
-        self, synapse: bt.Synapse
-    ) -> Tuple[bool, str]:
+    async def _blacklist(self, synapse: bt.Synapse) -> Tuple[bool, str]:
         """
         Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
         define the logic for blacklisting requests based on your needs and desired security parameters.
@@ -249,7 +246,7 @@ class BaseMinerNeuron(BaseNeuron):
                     f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
                 )
                 return True, "Non-validator hotkey"
-            
+
         if self.metagraph.S[uid] < self.config.blacklist.minimal_alpha_stake:
             # require true validators to have at least minimal alpha stake.
             bt.logging.warning(

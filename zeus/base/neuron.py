@@ -29,6 +29,7 @@ from zeus.utils.config import check_config, add_args, config
 from zeus.utils.misc import ttl_get_block
 from zeus import __spec_version__ as spec_version
 
+
 class BaseNeuron(ABC):
     """
     Base class for Bittensor miners. This class is abstract and should be inherited by a subclass. It contains the core logic for all neurons; validators and miners.
@@ -161,13 +162,13 @@ class BaseNeuron(ABC):
         # )
         try:
             state_path = os.path.join(self.config.neuron.full_path, "state.npz")
-            
+
             # Get current block number (handle potential errors)
             try:
                 current_block = int(self.block)
             except (AttributeError, TypeError):
                 current_block = 0
-            
+
             # Save the state of the neuron to file
             np.savez(
                 state_path,
@@ -176,7 +177,9 @@ class BaseNeuron(ABC):
                 uid=self.uid,
                 spec_version=self.spec_version,
             )
-            bt.logging.debug(f"Saved neuron state: step={self.step}, block={current_block}")
+            bt.logging.debug(
+                f"Saved neuron state: step={self.step}, block={current_block}"
+            )
         except Exception as e:
             bt.logging.warning(f"Failed to save neuron state: {e}")
 
@@ -186,24 +189,24 @@ class BaseNeuron(ABC):
         # )
         try:
             state_path = os.path.join(self.config.neuron.full_path, "state.npz")
-            
+
             if not os.path.exists(state_path):
                 bt.logging.info("No saved state found. Starting with fresh state.")
                 return
-            
+
             # Load the state of the neuron from file
             state = np.load(state_path, allow_pickle=True)
-            
+
             # Restore step if it exists
             if "step" in state:
                 self.step = int(state["step"])
                 bt.logging.info(f"Loaded neuron state: step={self.step}")
-            
+
             # Log other saved state information
             if "block" in state:
                 saved_block = int(state["block"])
                 bt.logging.debug(f"Last saved block: {saved_block}")
-            
+
             if "spec_version" in state:
                 saved_spec_version = int(state["spec_version"])
                 if saved_spec_version != self.spec_version:
@@ -211,4 +214,6 @@ class BaseNeuron(ABC):
                         f"Spec version mismatch: saved={saved_spec_version}, current={self.spec_version}"
                     )
         except Exception as e:
-            bt.logging.warning(f"Failed to load neuron state: {e}. Starting with fresh state.")
+            bt.logging.warning(
+                f"Failed to load neuron state: {e}. Starting with fresh state."
+            )
