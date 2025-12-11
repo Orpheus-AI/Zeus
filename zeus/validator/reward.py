@@ -25,6 +25,7 @@ import bittensor as bt
 from zeus.validator.miner_data import MinerData
 from zeus.validator.constants import (
     REWARD_DIFFICULTY_SCALER,
+    AGE_DIFFICULTY_SHIFT,
     REWARD_RMSE_WEIGHT,
     REWARD_EFFICIENCY_WEIGHT,
     MIN_RELATIVE_SCORE,
@@ -195,7 +196,7 @@ def set_rewards(
     # make difficulty [-1, 1], then go between [1/scaler, scaler]
     diff_gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
     # challenges far in future are now considered more difficult
-    gamma = 1 / (diff_gamma + max(0, challenge_age))
+    gamma = 1 / (diff_gamma + max(0, challenge_age + AGE_DIFFICULTY_SHIFT))
 
     # compute unnormalised scores
     for miner_data in miners_data:
