@@ -168,3 +168,6 @@ testing/
 *.env
 *~
 wandb/
+
+# Models
+models/

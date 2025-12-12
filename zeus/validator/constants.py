@@ -19,12 +19,12 @@ WANDB_MAX_LOGS = 95_000
 
 # the variables miners are tested on, with their respective sampling weight
 ERA5_DATA_VARS: Dict[str, float] = {
-    "2m_temperature": 0.15,
+    "2m_temperature": 0.3,
     "total_precipitation": 0.15,
-    "100m_u_component_of_wind": 0.2,
-    "100m_v_component_of_wind": 0.2,
-    "2m_dewpoint_temperature": 0.2,
-    "surface_pressure": 0.1
+    "100m_u_component_of_wind": 0.15,
+    "100m_v_component_of_wind": 0.15,
+    "2m_dewpoint_temperature": 0.125,
+    "surface_pressure": 0.125
 }
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
@@ -36,6 +36,9 @@ ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
 # ------------------------------------------------------
 # 1.0 would imply no difficulty scaling, should be >= 1.
 REWARD_DIFFICULTY_SCALER = 2.0
+# age difficulty goes -1 to 1 by default, shift it by value below (and make it always positive)
+AGE_DIFFICULTY_SHIFT = 1
+
 # 70% of emission for quality, 30% for speed
 REWARD_RMSE_WEIGHT = 0.8
 REWARD_EFFICIENCY_WEIGHT = 0.2
