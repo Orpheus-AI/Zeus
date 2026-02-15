@@ -146,11 +146,11 @@ def get_curved_scores(
         if cap_factor is None:
             # if all better than max, everyone gets perfect score here.
             min_score = min(max_score, min(raw_scores))
-        
-        operator = truediv if max_score > 0 else mul
-        median_bound = operator(np.median(raw_scores), cap_factor)
-        max_bound = operator(max_score, cap_factor)
-        min_score = min(median_bound, max_bound)
+        else:
+            operator = truediv if max_score > 0 else mul
+            median_bound = operator(np.median(raw_scores), cap_factor)
+            max_bound = operator(max_score, cap_factor)
+            min_score = min(median_bound, max_bound)
 
     result = []
     for score in raw_scores:
