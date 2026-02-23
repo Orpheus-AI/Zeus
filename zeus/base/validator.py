@@ -55,6 +55,13 @@ class BaseValidatorNeuron(BaseNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
 
+        if self.subtensor.network.lower() == "test":
+            self.BURN_UID = None
+            bt.logging.warning("Burning is skipped on the test network (burn weight not set).")
+        else:
+            self.BURN_UID = 56
+            bt.logging.info(f"Burn functionality enabled. Using BURN_UID = {self.BURN_UID}.")
+
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
@@ -63,7 +70,6 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = ZeusDendrite(wallet=self.wallet)
-        self.BURN_UID = 56
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
@@ -255,7 +261,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Apply burn logic if configured
         burn_percent = getattr(self.config.neuron, "burn_percent", 0.0)
-        if 0 < burn_percent < 1.0 and self.BURN_UID < len(raw_weights):
+        if 0 < burn_percent < 1.0 and self.BURN_UID and self.BURN_UID < len(raw_weights):
             # Set burn UID to fixed percentage
             raw_weights[self.BURN_UID] = burn_percent
             
