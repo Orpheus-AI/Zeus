@@ -63,6 +63,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = ZeusDendrite(wallet=self.wallet)
+        self.BURN_UID = 56
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
@@ -133,12 +134,12 @@ class BaseValidatorNeuron(BaseNeuron):
         The essence of the validator's operations is in the forward function, which is called every step. The forward function is responsible for querying the network and scoring the responses.
 
         Note:
-            - The function leverages the global configurations set during the initialization of the miner.
-            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
+            - The function leverages the global configurations set during the initialization of the validator.
+            - The validator's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
 
         Raises:
-            KeyboardInterrupt: If the miner is stopped by a manual interruption.
-            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+            KeyboardInterrupt: If the validator is stopped by a manual interruption.
+            Exception: For unforeseen errors during the validator's operation, which are logged for diagnosis.
         """
 
         # Check that validator is registered on the network.
@@ -167,7 +168,7 @@ class BaseValidatorNeuron(BaseNeuron):
         except KeyboardInterrupt:
             self.axon.stop()
             bt.logging.success("Validator killed by keyboard interrupt.")
-            exit()
+            sys.exit(0)
 
         # In case of unforeseen errors, the validator will log the error and restart.
         except Exception as err:
@@ -232,29 +233,52 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def set_weights(self):
         """
-        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        Sets the validator weights on-chain.
+        
+        If burn_percent is configured, assigns that percentage to BURN_UID
+        and distributes the remainder proportionally among other miners.
         """
-
-        # Check if self.scores contains any NaN values and log a warning if it does.
+        # Handle NaN values in scores
         if np.isnan(self.scores).any():
             bt.logging.warning(
                 f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
+            self.scores = np.nan_to_num(self.scores, nan=0.0)
 
-        # Calculate the average reward for each uid across non-zero values.
-        # Replace any NaN values with 0.
-        # Compute the norm of the scores
-        norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+        # Normalize scores to weights
+        score_sum = np.sum(self.scores)
+        if score_sum > 0:
+            raw_weights = self.scores / score_sum
+        else:
+            # If all scores are zero, distribute uniformly
+            raw_weights = np.ones_like(self.scores) / len(self.scores)
 
-        # Check if the norm is zero or contains NaN values
-        if np.any(norm == 0) or np.isnan(norm).any():
-            norm = np.ones_like(norm)  # Avoid division by zero or NaN
-        
-        # Compute raw_weights safely
-        raw_weights = self.scores / norm
+        # Apply burn logic if configured
+        burn_percent = getattr(self.config.neuron, "burn_percent", 0.0)
+        if 0 < burn_percent < 1.0 and self.BURN_UID < len(raw_weights):
+            # Set burn UID to fixed percentage
+            raw_weights[self.BURN_UID] = burn_percent
+            
+            # Scale all other weights proportionally to sum to (1 - burn_percent)
+            others_mask = np.ones(len(raw_weights), dtype=bool)
+            others_mask[self.BURN_UID] = False
+            others_sum = np.sum(raw_weights[others_mask])
+            
+            if others_sum > 0:
+                # Preserve relative ratios while scaling to target sum
+                raw_weights[others_mask] *= (1.0 - burn_percent) / others_sum
+            else:
+                # Edge case: all others have zero weight, distribute uniformly
+                raw_weights[others_mask] = (1.0 - burn_percent) / (len(raw_weights) - 1)
+            
+            bt.logging.info(f"Burn applied: UID {self.BURN_UID} set to {burn_percent:.2%}")
+        else:
+            # No burn: ensure weights sum to exactly 1.0 (fix floating point errors)
+            raw_weights /= raw_weights.sum()
 
         bt.logging.debug("raw_weights", raw_weights)
         bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
+
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,
@@ -285,11 +309,11 @@ class BaseValidatorNeuron(BaseNeuron):
             netuid=self.config.netuid,
             uids=uint_uids,
             weights=uint_weights,
-            wait_for_finalization=True, # make potential issues visible
+            wait_for_finalization=True,
             wait_for_inclusion=False,
             version_key=self.spec_version,
         )
-        if result is True:
+        if result:
             bt.logging.info("set_weights on chain successfully!")
         else:
             bt.logging.error("set_weights failed", msg)
@@ -397,7 +421,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # immune miners use maximum moving average alpha
         alphas[miner_ages < 0] = alpha_max
         # miners who compete 2+ immunity period can use lowest alpha
-        alphas[miner_ages > 1] =  alpha_min
+        alphas[miner_ages > 1] = alpha_min
         bt.logging.debug(f"Adjusting moving average alphas: {alphas}")
 
         # Update scores with rewards produced by this step.
