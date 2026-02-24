@@ -211,6 +211,13 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
+        "--neuron.burn_percent",
+        type=float,
+        help="The percentage of the reward to burn.",
+        default=0.9,
+    )
+
+    parser.add_argument(
         "--neuron.vpermit_tao_limit",
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
