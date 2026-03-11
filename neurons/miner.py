@@ -17,20 +17,25 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import base64
 import time
-import torch
 import typing
+
 import bittensor as bt
-
-import openmeteo_requests
-
 import numpy as np
-from zeus.data.converter import get_converter
-from zeus.utils.config import get_device_str
-from zeus.utils.time import to_timestamp
-from zeus.protocol import TimePredictionSynapse
-from zeus.base.miner import BaseMinerNeuron
+import pandas as pd
+import torch
+
 from zeus import __version__ as zeus_version
+from zeus.base.miner import BaseMinerNeuron
+from zeus.protocol import (
+    HashedTimePredictionSynapse,
+    PredictionSynapse,
+    TimePredictionSynapse,
+)
+from zeus.utils.compression import compress_prediction
+from zeus.utils.hash import prediction_hash
+from zeus.utils.time import to_timestamp
 
 
 class Miner(BaseMinerNeuron):
@@ -38,7 +43,7 @@ class Miner(BaseMinerNeuron):
     Your miner neuron class. You should use this class to define your miner's behavior.
     In particular, you should replace the forward function with your own logic.
 
-    Currently the base miner does a request to OpenMeteo (https://open-meteo.com/) for predictions.
+    Currently the base miner does a request to Herbie for predictions.
     You are encouraged to attempt to improve over this by changing the forward function.
     """
 
@@ -46,83 +51,95 @@ class Miner(BaseMinerNeuron):
         super(Miner, self).__init__(config=config)
 
         bt.logging.info("Attaching forward functions to miner axon.")
+        # Register both synapse types so the axon accepts HashedTimePredictionSynapse and TimePredictionSynapse.
         self.axon.attach(
-            forward_fn=self.forward,
-            blacklist_fn=self.blacklist,
-            priority_fn=self.priority,
+            forward_fn=self._forward_hashed,
+            blacklist_fn=self._blacklist_hashed,
+            priority_fn=self._priority_hashed,
+        ).attach(
+            forward_fn=self._forward_unhashed_predictions,
+            blacklist_fn=self._blacklist_time,
+            priority_fn=self._priority_time,
         )
+        bt.logging.warning(f"Miner axon attached {self.axon}")
+        self.pre_compute_predictions()
         
         # TODO(miner): Anything specific to your use case you can do here
-        self.device: torch.device = torch.device(get_device_str())
-        self.openmeteo_api = openmeteo_requests.Client()
 
-    async def forward(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
+        # Validators send requests to the miners for the forecast in the next 48hours in step of 1 hour every 6 hours starting at 00 (00, 06, 12, 18).
+        # Because this is known and schedules, miners should precompute and save their forecast
+        
+        # The requests come in 3 stages:
+        #   at 00, 06, 12, and 18 miners need to pass a hash of their predictions, this is the "commitment" stage
+        #   1 hour after the commitment stage, some miners would be requested to send the actual forecast, unhashed
+        #   Validators check if the unhashed predictions match the commited predictions, if a miner doesn't answer, or sends back a forecast different than the one which was hashed 30 minutes prior, it receives a penelty
+        #   In a few days (7 days) when the ground truth becomes available, miners are requested to pass their forecast again, for the past dates. 
+        #   the validators then check the commited hash with the forecast that the miners submitted and if it matches, the miners are scored. 
+        # 
+        # Therefore it is important that the miners keep their forecasts at least until the ground truth of the last time step of the forecats becomes available and the miners are scored. 
+
+        self.precomputed_forecast = np.random.rand(49, 721, 1440).astype(np.float16)
+
+    def pre_compute_predictions(self):
         """
-        Processes the incoming TimePredictionSynapse for a prediction.
+        This function precomputes and saves the predictions. 
+        Given that the requests are at 00, 06, 12, 18 o'clock, 
+        the predictions are precomputed one hour prior to request time. 
 
-        Args:
-            synapse (TimePredictionSynapse): The synapse object containing the time range and coordinates
-
-        Returns:
-            TimePredictionSynapse: The synapse object with the 'predictions' field set".
+        This function return nothing
         """
-        # shape (lat, lon, 2) so a grid of locations
-        coordinates = torch.Tensor(synapse.locations)
-        start_time = to_timestamp(synapse.start_time)
-        end_time = to_timestamp(synapse.end_time)
-        bt.logging.info(
-            f"Received request! Predicting {synapse.requested_hours} hours of {synapse.variable} for grid of shape {coordinates.shape}."
-        )
+        # TODO(miner): Anything specific to your use case you can do here 
 
-        ##########################################################################################################
-        # TODO (miner) you likely want to improve over this baseline of calling OpenMeteo by changing this section
-        latitudes, longitudes = coordinates.view(-1, 2).T
-        converter = get_converter(synapse.variable)
-        params = {
-            "latitude": latitudes.tolist(),
-            "longitude": longitudes.tolist(),
-            "hourly": converter.om_name,
-            "start_hour": start_time.isoformat(timespec="minutes"),
-            "end_hour": end_time.isoformat(timespec="minutes"),
-        }
-        responses = self.openmeteo_api.weather_api(
-            "https://api.open-meteo.com/v1/forecast", params=params, method="POST"
-        )
+    async def forward(self, synapse: PredictionSynapse) -> typing.Tuple[PredictionSynapse, bytes]:
+        """
+        Loads predictions, compress, returns the compression.
+        """
 
-        # get output as grid of [time, lat, lon, variables]
-        output = torch.Tensor(np.stack(
-            [
-                np.stack(
-                    [
-                        r.Hourly().Variables(i).ValuesAsNumpy() 
-                        for i in range(r.Hourly().VariablesLength())
-                    ],
-                    axis=-1
-                )
-                for r in responses
-            ],
-            axis=1
-        )).reshape(synapse.requested_hours, *coordinates.shape[:2], -1)
-        # [time, lat, lon] in case of single variable output
-        output = output.squeeze(dim=-1)
-        # Convert variable(s) to ERA5 units, combines variables for windspeed
-        output = converter.om_to_era5(output)
-        ##########################################################################################################
-        bt.logging.info(f"Output shape is {output.shape}")
+        bt.logging.info(f"Received a request for start time {to_timestamp(synapse.start_time)} for variable {synapse.variable} with step size {synapse.step_size}")
+       
+        output = self.precomputed_forecast
+        # Protocol: compress and base64-encode predictions
+        compressed = compress_prediction(output)
+        return compressed
 
-        synapse.predictions = output.tolist()
+    async def _forward_hashed(self, synapse: HashedTimePredictionSynapse) -> HashedTimePredictionSynapse:
+        """Axon endpoint for commit-phase (hash-only) requests."""
+
+
+        compressed = await self.forward(synapse)
         synapse.version = zeus_version
+        synapse.hash = prediction_hash(compressed, self.wallet.hotkey.ss58_address)
         return synapse
-    
 
-    async def blacklist(self, synapse: TimePredictionSynapse) -> typing.Tuple[bool, str]:
+    async def _forward_unhashed_predictions(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
+        """Axon endpoint for reveal-phase (predictions) requests."""
+        # Miners don't reveal outside of those hours as your forecast might be used for relay mining
+        if pd.Timestamp.now("UTC").hour%6 == 0:
+            return synapse
+        
+        compressed = await self.forward(synapse)
+        synapse.version = zeus_version
+        synapse.predictions = base64.b64encode(compressed).decode("ascii")
+        return synapse
+
+    async def _blacklist_hashed(self, synapse: HashedTimePredictionSynapse) -> typing.Tuple[bool, str]:
+        return await self.blacklist(synapse)
+
+    async def _blacklist_time(self, synapse: TimePredictionSynapse) -> typing.Tuple[bool, str]:
+        return await self.blacklist(synapse)
+
+    async def _priority_hashed(self, synapse: HashedTimePredictionSynapse) -> float:
+        return await self.priority(synapse)
+
+    async def _priority_time(self, synapse: TimePredictionSynapse) -> float:
+        return await self.priority(synapse)
+
+    async def blacklist(self, synapse: PredictionSynapse) -> typing.Tuple[bool, str]:
         return await self._blacklist(synapse)
     
-    async def priority(self, synapse: TimePredictionSynapse) -> float:
+    async def priority(self, synapse: PredictionSynapse) -> float:
         return await self._priority(synapse)
     
-    
-
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
     with Miner() as miner:

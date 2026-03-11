@@ -168,3 +168,4 @@ testing/
 *.env
 *~
 wandb/
+zeus-venv/*

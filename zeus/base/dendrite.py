@@ -2,9 +2,10 @@ from typing import Union, Any, AsyncGenerator, Dict, Tuple, List, Awaitable, Typ
 T = TypeVar("T")
 import time
 import asyncio
-
+import json
 import aiohttp
 import bittensor as bt
+from zeus.validator.constants import MAX_MINER_RESPONSE_BODY_BYTES
 
 
 class ZeusDendrite(bt.Dendrite):
@@ -22,7 +23,7 @@ class ZeusDendrite(bt.Dendrite):
         super().__init__(*args, **kwargs)
         # just do this once initially
         connector = aiohttp.TCPConnector(
-            limit=200, 
+            limit=260, 
             verify_ssl=False, 
             loop=asyncio.get_event_loop(),
             limit_per_host=125,
@@ -73,12 +74,17 @@ class ZeusDendrite(bt.Dendrite):
                     for target_axon in axons
                 ]
             )
+            bt.logging.success(f"ZeusDendrite prepared {len(axons)} calls")
 
-            # actually execute the calls, internal timing starts here
             return await gather_func(
                 *[
-                    self.call(post_args=post_args, synapse=synapse, deserialize=deserialize) 
-                    for (synapse, post_args) in calls
+                    self.call(
+                        post_args=post_args, 
+                        synapse=synapse, 
+                        target_axon=target_axon, # Pass the axon info down
+                        deserialize=deserialize
+                    ) 
+                    for (synapse, post_args, target_axon) in calls
                 ]
             )
 
@@ -109,23 +115,20 @@ class ZeusDendrite(bt.Dendrite):
         request_name = synapse.__class__.__name__
         url = self._get_endpoint_url(target_axon, request_name=request_name)
         # Preprocess synapse for making a request
-        synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout)
+        #synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout)
 
         # precompute the arguments to the call
         return (
             synapse, 
-            {
-            "url": url,
-            "headers": synapse.to_headers(),
-            "json": synapse.model_dump(),
-            "timeout": aiohttp.ClientTimeout(total=timeout),
-            }
+            {"url": url, "timeout": aiohttp.ClientTimeout(total=timeout), "timeout_float": timeout},
+            target_axon
         )
 
     async def call(
         self,
         post_args: Dict[str, Any],
         synapse: bt.Synapse,
+        target_axon: bt.AxonInfo, # New argument
         deserialize: bool = True,
     ) -> bt.Synapse:
         """
@@ -136,6 +139,12 @@ class ZeusDendrite(bt.Dendrite):
         - Synapse or deserialisation result
         """
         async with self.semaphore:
+            timeout_float = post_args.pop("timeout_float")
+            synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout_float)
+            
+            # Update headers and body with the fresh signature
+            post_args["headers"] = synapse.to_headers()
+            post_args["json"] = synapse.model_dump()
             # Record start time
             start_time = time.time()
 
@@ -143,11 +152,25 @@ class ZeusDendrite(bt.Dendrite):
                 # Log outgoing request
                 self._log_outgoing_request(synapse)
 
-                # Make the HTTP POST request
+                # Make the HTTP POST request (single request — second request would hit "Nonce is too old")
                 async with (await self.session).post(**post_args) as response:
-                    # Extract the JSON response from the server
-                    json_response = await response.json()
-                    # Process the server response and fill synapse
+ 
+                    chunks = []
+                    bytes_read = 0
+                    
+                    # We iterate over the stream manually to ensure we never over-allocate
+                    async for chunk in response.content.iter_chunked(1024 * 1024): # chunks
+                        bytes_read += len(chunk)
+                        if bytes_read > MAX_MINER_RESPONSE_BODY_BYTES:
+                            # Close the connection immediately to stop the flow
+                            response.close() 
+                            raise ValueError("Miner sent too much data (Byte Limit Exceeded)")
+                        chunks.append(chunk)
+
+                    body = b"".join(chunks)
+                    json_response = json.loads(body)
+                    bt.logging.warning(f"read bytes {bytes_read}")
+
                     self.process_server_response(response, json_response, synapse)
 
                 # Set process time and log the response
@@ -161,6 +184,7 @@ class ZeusDendrite(bt.Dendrite):
 
                 # Log synapse event history
                 self.synapse_history.append(bt.Synapse.from_headers(synapse.to_headers()))
+                #bt.logging.success(f"Axon {post_args['url']} responded")
 
                 # Return the updated synapse object after deserializing if requested
                 return synapse.deserialize() if deserialize else synapse

@@ -5,11 +5,6 @@ set -a
 source validator.env
 set +a
 
-# Login to Weights & Biases
-if ! wandb login $WANDB_API_KEY; then
-  echo "Failed to login to Weights & Biases with the provided API key."
-fi
-
 if [ -z "$CDS_API_KEY" ]; then
   echo "Please specify a CDS API KEY to login to CDS! You will not be able to download live ERA5 data."
   exit 1

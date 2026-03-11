@@ -13,7 +13,6 @@ h5netcdf==1.6.4
 
 ipython==8.31.0
 ipykernel==6.29.5
-wandb==0.19.0
 httpx==0.28.1
 
 cartopy==0.24.1
@@ -22,6 +21,8 @@ dotenv==0.9.9
 
 check_shapes==1.1.1
 
+tzdata
+
 # validators only
 timezonefinder==6.5.8
 discord-webhook==1.4.1
@@ -29,3 +30,5 @@ cdsapi==0.7.5
 
 # miners only
 openmeteo-requests==1.3.0
+blosc2==4.0.0
+lmdb==1.7.5

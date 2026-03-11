@@ -17,30 +17,23 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from typing import List, Optional, Union
-from functools import partial
 import time
-import bittensor as bt
-import wandb
-import numpy as np
-import torch
+from functools import partial
+from typing import List
 
-from zeus.data.sample import Era5Sample
-from zeus.data.loaders.era5_cds import Era5CDSLoader
-from zeus.utils.misc import split_list
-from zeus.utils.time import timestamp_to_str
-from zeus.utils.coordinates import bbox_to_str
-from zeus.validator.reward import set_rewards, set_penalties, rmse
-from zeus.validator.miner_data import MinerData
-from zeus.utils.logging import maybe_reset_wandb
+import bittensor as bt
+from copy import deepcopy
 from zeus.base.validator import BaseValidatorNeuron
-from zeus.protocol import TimePredictionSynapse
+from zeus.data.loaders.era5_cds import Era5CDSLoader
+from zeus.validator.hash_phase import run_all_hash_phases
 from zeus.validator.constants import FORWARD_DELAY_SECONDS
+from zeus.validator.prediction_phase import run_final_prediction_phase, run_initial_prediction_top_k_phases
+
 
 
 async def forward(self: BaseValidatorNeuron):
     """
-    The forward function is called by the validator every time step.
+    The forward function is called by the validator. Commit and reveal phases are done in a single forward pass.
 
     It is responsible for querying the network and scoring the responses.
 
@@ -49,187 +42,40 @@ async def forward(self: BaseValidatorNeuron):
 
     """
     start_forward = time.time()
-    # based on the block, we decide if we should score old stored predictions.
-    if self.database.should_score(self.block):
-        bt.logging.info(f"Potentially scoring stored predictions for live ERA5 data.")
-        self.database.score_and_prune(score_func=partial(complete_challenge, self))
-        return
-    
     data_loader: Era5CDSLoader = self.cds_loader
     if not data_loader.is_ready():
         bt.logging.info("Data loader is not ready yet... Waiting until ERA5 data is downloaded.")
-        time.sleep(20)  # Don't need to spam above message
+        time.sleep(100)
+        #time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
         return
 
-    bt.logging.info(f"Sampling data...")
-    sample = data_loader.get_sample()
-    bt.logging.success(
-        f"Data sampled with bounding box {bbox_to_str(sample.get_bbox())} for variable {sample.variable}"
-    )
-    bt.logging.success(
-        f"Data sampled starts from {timestamp_to_str(sample.start_timestamp)} | Asked to predict {sample.predict_hours} hours ahead."
-    )
+    # If the validator has been diregistered, it will automatically stop the program
+    self.check_registered()
+    
+    if self.time_scheduler.is_hash_commit_time():
+        # Note : because the challenge starts at .floor('6h') of the time now, that means that at is_hash_commit_time and at is_query_best_time the same challenge would be returned
+        self.challenges = data_loader.get_challenge_samples()
+        bt.logging.info(f"Requesting hashes from all miners for {len(self.challenges)} challenges")
+        self.latest_good_miners_per_challenge = await run_all_hash_phases(self, self.challenges)
 
-    bt.logging.info("Fetching OpenMeteo and ECMWF IFS HRES baselines!")
-    # get the Open Meteo baseline data, which we also store and check against
-    sample.om_baseline = self.open_meteo_loader.get_output(sample)
-    if not torch.isfinite(sample.om_baseline).all():
-        bt.logging.warning("OpenMeteo baseline contains NaN or Inf values, skipping this sample.")
-        return
+    if self.time_scheduler.is_query_best_time():
+        # Note : because the challenge starts at .floor('6h') of the time now, that means that at is_hash_commit_time and at is_query_best_time the same challenge would be returned
+        previous_metagraph = deepcopy(self.metagraph)
+        previous_hotkeys2uids = {hotkey: uid for uid, hotkey in enumerate(previous_metagraph.hotkeys)}
 
-    # Not used for scoring, but also logged to W&B for comparisons of miner quality
-    sample.ifs_hres_baseline = self.open_meteo_loader.get_output(sample, model="ecmwf_ifs")
-  
-    miner_uids = self.uid_tracker.get_random_uids(
-        k = self.config.neuron.sample_size,
-        tries = 3
-    )
+        self.resync_metagraph()
+        await run_initial_prediction_top_k_phases(self, self.challenges, self.latest_good_miners_per_challenge, previous_hotkeys2uids)
 
-    axons = [self.metagraph.axons[uid] for uid in miner_uids]
-    bt.logging.info(f"Querying {len(miner_uids)} miners..")
-    responses: List[TimePredictionSynapse] = await self.dendrite(
-        axons=axons,
-        synapse=sample.get_synapse(),
-        deserialize=False,
-        timeout=self.config.neuron.timeout,
-    )
-
-    resp_times = [float(r.dendrite.process_time) for r in responses if r.dendrite.process_time]
-    bt.logging.success(f"Received {len(resp_times)} responses with average response time of {np.mean(resp_times):.2f}s")
-
-    miners_data = parse_miner_inputs(
-        self, 
-        sample=sample, 
-        hotkeys=[axon.hotkey for axon in axons], 
-        predictions=[r.deserialize() for r in responses],
-        response_times=[r.dendrite.process_time for r in responses]    
-    )
-    # Identify miners who should receive a penalty
-    good_miners, bad_miners = split_list(miners_data, lambda m: not m.shape_penalty)
-
-    # penalise 
-    if len(bad_miners) > 0:
-        uids = [miner.uid for miner in bad_miners]
-        self.uid_tracker.mark_finished(uids, good=False)
-        bt.logging.success(f"Punishing miners that got a penalty: {uids}")
-        self.update_scores(
-            [miner.score for miner in bad_miners],
-            uids,
-        )
-        do_wandb_logging(self, sample, bad_miners)
-
-    if len(good_miners) > 0:
-        uids = [m.uid for m in good_miners]
-        # store non-penalty miners for proxy
-        self.uid_tracker.mark_finished(uids, good=True)
-      
-        bt.logging.success(f"Storing challenge and sensible miner responses in SQLite database: {uids}")
-        self.database.insert(sample, miners_data=good_miners)
-
-    # prevent W&B logs from becoming massive
-    maybe_reset_wandb(self)
-    # Introduce a delay to prevent spamming requests
+    # based on the block and the readiness of the database, we decide if we should try to see if any challenges are ready for scoring 
+    if self.database.should_score():
+        bt.logging.info("Potentially scoring stored predictions for live ERA5 data.")
+        self.resync_metagraph() # TODO check that we set weights to the right person
+        need_to_set_weights = await self.database.score_and_prune(score_func=partial(run_final_prediction_phase, self))
+        if need_to_set_weights:
+            self.set_weights()
+    
     time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
+        
 
+            
 
-def parse_miner_inputs(
-    self: BaseValidatorNeuron,
-    sample: Era5Sample,
-    hotkeys: List[str],
-    predictions: List[torch.Tensor],
-    response_times: List[Optional[Union[str, float]]]
-) -> List[MinerData]:
-    """
-    Convert input to MinerData and calculate (and populate) their penalty fields.
-    Return a list of MinerData
-    """
-    lookup = {axon.hotkey: uid for uid, axon in enumerate(self.metagraph.axons)}
-
-    # Make miner data for each miner that is still alive
-    miners_data = []
-    for hotkey, prediction, response_time in zip(hotkeys, predictions, response_times):
-        uid = lookup.get(hotkey, None)
-        if uid is not None:
-            miners_data.append(
-                MinerData(
-                    uid=uid, 
-                    hotkey=hotkey, 
-                    response_time=float(response_time or self.config.neuron.timeout), 
-                    prediction=prediction
-                )
-            )
-
-    # pre-calculate penalities since we need those to filter
-    return set_penalties(
-        correct_shape=sample.om_baseline.shape,
-        miners_data=miners_data
-    )
-
-
-def complete_challenge(
-    self: BaseValidatorNeuron,
-    sample: Era5Sample,
-    hotkeys: List[str],
-    predictions: List[torch.Tensor],
-    response_times: List[float]
-) -> Optional[List[MinerData]]:
-    """
-    Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
-    Note that non-responding miners (which get a penalty) have already been excluded.
-    """
-    
-    miners_data = parse_miner_inputs(self, sample, hotkeys, predictions, response_times)
-    miners_data = set_rewards(
-        output_data=sample.output_data, 
-        miners_data=miners_data, 
-        baseline_data=sample.om_baseline,
-        difficulty_grid=self.difficulty_loader.get_difficulty_grid(sample),
-        challenge_age=self.cds_loader.get_relative_age(sample),
-    )
-
-    self.update_scores(
-        [miner.score for miner in miners_data],
-        [miner.uid for miner in miners_data],
-    )
-    
-    bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
-    for miner in miners_data:
-        bt.logging.debug(
-            f"UID: {miner.uid} | Predicted shape: {miner.prediction.shape} | Reward: {miner.score} | Penalty: {miner.shape_penalty}"
-        )
-    do_wandb_logging(self, sample, miners_data)
-
-
-def do_wandb_logging(
-        self, 
-        challenge: Era5Sample, 
-        miners_data: List[MinerData], 
-    ):
-    if self.config.wandb.off:
-        return
-    
-    for miner in miners_data:
-        wandb.log(
-            {f"miner_{challenge.variable}_{miner.uid}_{key}": val for key, val in miner.metrics.items()},
-            commit=False,  # All logging should be the same commit
-        )
-
-    uid_to_hotkey = {miner.uid: miner.hotkey for miner in miners_data}
-    if challenge.output_data is not None:
-        wandb.log(
-            {
-                "baseline_rmse": rmse(challenge.output_data, challenge.om_baseline, default=np.nan),
-                "ifs_hres_rmse": rmse(challenge.output_data, challenge.ifs_hres_baseline, default=np.nan),
-            }, commit=False
-        )
-    wandb.log(
-        {
-            "query_timestamp": challenge.query_timestamp,
-            "variable": challenge.variable,
-            "start_timestamp": challenge.start_timestamp,
-            "end_timestamp": challenge.end_timestamp,
-            "predict_hours": challenge.predict_hours,
-            "lat_lon_bbox": challenge.get_bbox(),
-            "uid_to_hotkey": uid_to_hotkey,
-        },
-    )

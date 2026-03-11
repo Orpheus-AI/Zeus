@@ -32,6 +32,38 @@ def check_uid_availability(
     return True
 
 
+def get_available_uids(
+    metagraph: "bt.metagraph.Metagraph",
+
+    vpermit_tao_limit: int,
+    mainnet_uid: int,
+    exclude: Set[int] = None,
+) -> np.ndarray:
+    """Returns all available uids from the metagraph.
+    Args:
+        metagraph (:obj: bt.metagraph.Metagraph): Metagraph object
+        vpermit_tao_limit (int): Validator permit tao limit
+        mainnet_uid (int): The UID of the mainnet
+        exclude (List[int], optional): List of uids to exclude from the random sampling.
+    Returns:
+        uids (np.ndarray): All available uids.
+    Notes:
+        - If there are no available non-excluded `uids`, returns an empty array.
+    """
+    if exclude is None:
+        exclude = set()
+
+    avail_uids = []
+    for uid in range(metagraph.n.item()):
+        available = check_uid_availability(
+            metagraph, uid, vpermit_tao_limit, mainnet_uid
+        )
+        if available:
+            avail_uids.append(uid)
+
+    candidate_uids = [uid for uid in avail_uids if uid not in exclude]
+    return candidate_uids
+
 def get_random_uids(
     metagraph: "bt.metagraph.Metagraph",
     k: int,
@@ -53,21 +85,7 @@ def get_random_uids(
           the function will return all available non-excluded `uids` in random order.
         - If there are no available non-excluded `uids`, returns an empty array.
     """
-    if k < 0:
-        raise ValueError("k must be non-negative")
-    if exclude is None:
-        exclude = set()
-
-    avail_uids = []
-    for uid in range(metagraph.n.item()):
-        available = check_uid_availability(
-            metagraph, uid, vpermit_tao_limit, mainnet_uid
-        )
-        if available:
-            avail_uids.append(uid)
-
-    candidate_uids = [uid for uid in avail_uids if uid not in exclude]
-
+    candidate_uids = get_available_uids(metagraph, vpermit_tao_limit, mainnet_uid, exclude)
     sample_size = min(k, len(candidate_uids))
     if sample_size == 0:
         return np.array([], dtype=int)

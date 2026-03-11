@@ -69,7 +69,7 @@ setup(
     author="orpheus-ai.nl",
     packages=find_packages(),
     include_package_data=True,
-    author_email="eric@orpheus-ai.nl",
+    author_email="wouter@orpheus-ai.nl",
     license="MIT",
     python_requires=">=3.8",
     install_requires=requirements,

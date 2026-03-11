@@ -33,7 +33,7 @@ Traditionally, environmental forecasting is achieved through physics-based numer
 
 - **Miners:** Tasked with running forecasting algorithms that predict environmental variables at specific locations and timestamps.
   - **Research Integration:** We systematically update our detection models and methodologies in response to emerging academic research. Through the global ERA5 dataset, we are able to provide validators and miners with near infinite amounts of environmental data, which can also be used for training their models. All data is publicly available to everyone.
-- **Validators:** Responsible for challenging miners with a subsets of environmental data and evaluating miner performance on heldout data.
+- **Validators:** Responsible for challenging miners with a subsets of environmental data and evaluating miner performance on heldout data. Validation uses a commit–reveal flow; see the [Validator Guide](docs/Validating.md#validator-phases) for phases and timing.
   - **Resource Expansion:** We continuously add new enviromental challenges and data modalities to our subnet in order to evolve our subnet and solve a multitude of distinct problems.
 
 ## Community

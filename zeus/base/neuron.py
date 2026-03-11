@@ -103,9 +103,11 @@ class BaseNeuron(ABC):
     @abstractmethod
     def run(self): ...
 
-    def sync(self):
+
+    def sync_without_weights(self):
         """
-        Wrapper for synchronizing the state of the network for the given miner or validator.
+        Synchronizes the state of the network (registration and metagraph) 
+        and saves state, but bypasses the weight-setting logic.
         """
         # Ensure miner or validator hotkey is still registered on the network.
         self.check_registered()
@@ -113,11 +115,19 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.resync_metagraph()
 
-        if self.should_set_weights():
-            self.set_weights()
-
         # Always save state.
         self.save_state()
+
+
+    def sync(self):
+        """
+        Wrapper for synchronizing the state of the network for the given miner or validator.
+        """
+        # Ensure miner or validator hotkey is still registered on the network.
+        self.sync_without_weights()
+
+        if self.should_set_weights():
+            self.set_weights()
 
     def check_registered(self):
         # --- Check for registration.
