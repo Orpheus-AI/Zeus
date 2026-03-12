@@ -251,7 +251,7 @@ def complete_challenge(
     self,
     sample: Era5Sample,
     miners_data: List[MinerData],
-) -> Optional[List[MinerData]]:
+) -> None:
     """
     Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
     Note that non-responding miners (which get a penalty) have already been excluded.
@@ -275,6 +275,7 @@ def complete_challenge(
         bt.logging.warning(
             f"UID: {miner.uid} |  Reward: {miner.score} rmse: {miner.rmse} | mae: {miner.mae} | score {miner.score} | Penalty: {miner.shape_penalty} "
         )
+
 
 def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape):
     start_time = time.time()
