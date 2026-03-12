@@ -280,7 +280,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 variable_weights_list.append(weights)
                 state.best_10_miners = best_10
 
-            else: # no rank history yet, reward responing miners
+            else: # no rank history yet, reward responding miners
                 bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
                 weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below
                     metagraph_size=self.metagraph.n, 
@@ -381,7 +381,7 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.error("set_weights failed", msg)
 
     @abstractmethod
-    def get_responing_miners_hotkeys(self) -> Set[str]:
+    def get_responding_miners_hotkeys(self) -> Set[str]:
         """
         Returns a set of hotkeys that are responding to the validator.
         """
@@ -389,7 +389,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def reward_responders(self, metagraph_size:int, uids: List[int], hotkeys: List[str]):
         weights = np.zeros(metagraph_size)
-        responding_miners_hotkeys = self.get_responing_miners_hotkeys()
+        responding_miners_hotkeys = self.get_responding_miners_hotkeys()
         miners_hotkeys, _ = self.find_miners()
 
         # read all the hotkeys from 
