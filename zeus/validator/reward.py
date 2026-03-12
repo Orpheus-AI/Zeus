@@ -148,11 +148,11 @@ def set_rewards(
     
     sorted_miners = sorted(miners_data, key=_sort_key)
     
-    # 2. Extract values for the pure logic function
-    rmses = [m.rmse for m in sorted_miners]
+    # 2. Extract composite scores for the pure logic function
+    scores = [m.score for m in sorted_miners]
     
     # 3. Get ranks and assign them
-    ranks = calculate_competition_ranks(rmses)
+    ranks = calculate_competition_ranks(scores)
     
     for miner, rank in zip(sorted_miners, ranks):
         miner.score = float(rank)
