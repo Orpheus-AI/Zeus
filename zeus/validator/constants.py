@@ -17,7 +17,7 @@ ATTEMPTS_PER_MINER = 2
 # how many miners proxy queries
 PROXY_QUERY_K = 10
 # after how many percent of above it yields results
-RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be number than window size used for ranking
+RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be larger than window size used for ranking
 
 # the corresponding ERA5 variables miners are tested on with their scoring weight
 ERA5_DATA_VARS: Dict[str, float] = {

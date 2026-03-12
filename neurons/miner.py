@@ -72,11 +72,11 @@ class Miner(BaseMinerNeuron):
         # The requests come in 3 stages:
         #   at 00, 06, 12, and 18 miners need to pass a hash of their predictions, this is the "commitment" stage
         #   1 hour after the commitment stage, some miners would be requested to send the actual forecast, unhashed
-        #   Validators check if the unhashed predictions match the commited predictions, if a miner doesn't answer, or sends back a forecast different than the one which was hashed 30 minutes prior, it receives a penelty
+        #   Validators check if the unhashed predictions match the commited predictions, if a miner doesn't answer, or sends back a forecast different than the one which was hashed 30 minutes prior, it receives a penalty
         #   In a few days (7 days) when the ground truth becomes available, miners are requested to pass their forecast again, for the past dates. 
         #   the validators then check the commited hash with the forecast that the miners submitted and if it matches, the miners are scored. 
         # 
-        # Therefore it is important that the miners keep their forecasts at least until the ground truth of the last time step of the forecats becomes available and the miners are scored. 
+        # Therefore it is important that the miners keep their forecasts at least until the ground truth of the last time step of the forecasts becomes available and the miners are scored. 
 
         self.precomputed_forecast = np.random.rand(49, 721, 1440).astype(np.float16)
 

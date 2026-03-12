@@ -49,7 +49,7 @@ async def forward(self: BaseValidatorNeuron):
         #time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
         return
 
-    # If the validator has been diregistered, it will automatically stop the program
+    # If the validator has been deregistered, it will automatically stop the program
     self.check_registered()
     
     if self.time_scheduler.is_hash_commit_time():
