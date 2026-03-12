@@ -76,8 +76,8 @@ class Validator(BaseValidatorNeuron):
             self.database.prune_hotkeys(hotkeys)
 
     
-    def get_responing_miners_hotkeys(self) -> Set[str]:
-        return self.database.get_responing_miners_hotkeys()
+    def get_responding_miners_hotkeys(self) -> Set[str]:
+        return self.database.get_responding_miners_hotkeys()
     
     def __exit__(self, exc_type, exc_value, traceback):
         super().__exit__(exc_type, exc_value, traceback)

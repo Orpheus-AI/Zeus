@@ -411,7 +411,7 @@ class OptimizedWeatherStorage:
             bt.logging.exception(f"_get_hotkeys_and_uids_for_challenge: failed for challenge_uid={challenge_uid} — {e}")
             return [], []
     
-    def get_responing_miners_hotkeys(self) -> set[str]:
+    def get_responding_miners_hotkeys(self) -> set[str]:
         """
         Get the hotkeys of all the miners that have responded to at least one challenge
         """
@@ -544,7 +544,7 @@ class OptimizedWeatherStorage:
         try:
             cursor = conn.cursor()
 
-            # TODO what if we proned all the hotkeys for a given challenge, check that edge case
+            # TODO what if we pruned all the hotkeys for a given challenge, check that edge case
             cursor.execute(
                 """
                 DELETE FROM challenge_hotkey_map WHERE miner_hotkey IN ({});
