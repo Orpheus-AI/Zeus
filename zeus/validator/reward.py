@@ -169,7 +169,7 @@ def compute_min_rank_weights(
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Computes weights by 
-    1) calculating a rank for each hotkey by taking the avergae of their last window_size ranks from rank_history
+    1) calculating a rank for each hotkey by taking the average of their last window_size ranks from rank_history
      - if a hotkey doesn't have a rank history we give it a rank infinity.
     2) giving PERCENTAGE_GOING_TO_WINNER of the weight to the first one and logarithmically to the rest. 
     3) break ties based on the latest ranks. 

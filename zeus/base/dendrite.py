@@ -104,7 +104,7 @@ class ZeusDendrite(bt.Dendrite):
         Modifies the synapse in place, and returns all precomputed arguments for post request
 
         Returns:
-        - Synapyse: modified in place to include hotkey signing
+        - Synapse: modified in place to include hotkey signing
         - Post request arguments: A dict representing all precomputed HTTP post arguments
         """
         target_axon = (

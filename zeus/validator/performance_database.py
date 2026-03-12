@@ -80,7 +80,7 @@ class PerformanceDatabase:
             challenge_id = self.insert_challenge(sample)
         
         # Step 3) 
-        self.insert_miner_perfromance(challenge_id, miners_data)
+        self.insert_miner_performance(challenge_id, miners_data)
 
     def find_challenge_id(self, sample: Era5Sample) -> Optional[int]:
         """
@@ -88,7 +88,7 @@ class PerformanceDatabase:
         If the sample has been saved, the challenge_id (uid) is returned, otherwise returns None.
         
         Parameters:
-            sample: FtFSample - The sample to search for
+            sample: Era5Sample - The sample to search for
             
         Returns:
             Optional[int] - The challenge uid if found, None otherwise
@@ -130,7 +130,7 @@ class PerformanceDatabase:
         Insert a challenge into the database.
 
         Parameters:
-            sample: FtFSample - The sample to be added to the database
+            sample: Era5Sample - The sample to be added to the database
 
         Returns:
             The challenge uid.
@@ -159,7 +159,7 @@ class PerformanceDatabase:
             conn.commit()
             return challenge_uid
 
-    def insert_miner_perfromance(self, challenge_uid: int, miners_data: List[MinerData]):
+    def insert_miner_performance(self, challenge_uid: int, miners_data: List[MinerData]):
         """
         Insert the responses from the miners into the database.
 

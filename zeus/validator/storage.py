@@ -132,7 +132,7 @@ class OptimizedWeatherStorage:
         """
         Insert a challenge and responses into the database.
         If a challenge already exists find the uid and insert the responses
-        If a challenge doesn't exist, insert the challenge and the reponses
+        If a challenge doesn't exist, insert the challenge and the responses
         
         Return :
             boolean : whether the insertion was successful
@@ -274,7 +274,7 @@ class OptimizedWeatherStorage:
         If a challenge_uid is already in the responses table,
         append the row with the new hotkeys
 
-        Returns boolean wheather the insertion was successful
+        Returns boolean whether the insertion was successful
         """
         conn = sqlite3.connect(self.db_path)
         try:
@@ -303,7 +303,7 @@ class OptimizedWeatherStorage:
             return self._insert_hotkeys(challenge_uid, hotkeys, miner_uids, good_miners)
         except Exception as e:
             conn.rollback()
-            bt.logging.exception(f"_insert_challenge: failed — {e}")
+            bt.logging.exception(f"_insert_hash_responses: failed — {e}")
             raise e
         finally:
             conn.close()
@@ -313,7 +313,7 @@ class OptimizedWeatherStorage:
         If a challenge_uid is already in the responses table,
         append the row with the new hotkeys
 
-        Returns boolean wheather the insertion was successful
+        Returns boolean whether the insertion was successful
         """
         conn = sqlite3.connect(self.db_path)
         try:
@@ -336,7 +336,7 @@ class OptimizedWeatherStorage:
 
     def mark_miners_as_bad(self, sample: Era5Sample, hotkeys : List[str]) -> bool:
         """
-        Update the miiner status from good to bad for hotkeys and challenge as given in the parameters
+        Update the miner status from good to bad for hotkeys and challenge as given in the parameters
         Return bool whether the insertion was successful
         """
 
@@ -387,7 +387,7 @@ class OptimizedWeatherStorage:
         """
         Return all the hotkeys for a given challenge for good/bad miners
         """
-        bt.logging.debug(f"_get__get_hotkeys_and_uids_for_challengehotkeys: challenge_uid={challenge_uid}, good_miners={good_miners}")
+        bt.logging.debug(f"_get_hotkeys_and_uids_for_challenge: challenge_uid={challenge_uid}, good_miners={good_miners}")
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
@@ -501,7 +501,7 @@ class OptimizedWeatherStorage:
             miner_uids += current_challenge_bad_miner_uids
             hashes += [None]*len(current_challenge_bad_miner_hotkeys)
             
-            # the boolean with wheather the miner is good or not (Not really needed because if the hash is empty then the miner is bad, but in case you still want it):
+            # the boolean with whether the miner is good or not (Not really needed because if the hash is empty then the miner is bad, but in case you still want it):
             is_good = [1]*len(miner_hotkeys) + [0]*len(current_challenge_bad_miner_hotkeys)
                 
             await score_func(sample, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good)
