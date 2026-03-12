@@ -148,11 +148,11 @@ def set_rewards(
     
     sorted_miners = sorted(miners_data, key=_sort_key)
     
-    # 2. Extract values for the pure logic function
-    rmses = [m.rmse for m in sorted_miners]
+    # 2. Extract composite scores for the pure logic function
+    scores = [m.score for m in sorted_miners]
     
     # 3. Get ranks and assign them
-    ranks = calculate_competition_ranks(rmses)
+    ranks = calculate_competition_ranks(scores)
     
     for miner, rank in zip(sorted_miners, ranks):
         miner.score = float(rank)
@@ -251,7 +251,7 @@ def complete_challenge(
     self,
     sample: Era5Sample,
     miners_data: List[MinerData],
-) -> Optional[List[MinerData]]:
+) -> None:
     """
     Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
     Note that non-responding miners (which get a penalty) have already been excluded.
@@ -275,6 +275,7 @@ def complete_challenge(
         bt.logging.warning(
             f"UID: {miner.uid} |  Reward: {miner.score} rmse: {miner.rmse} | mae: {miner.mae} | score {miner.score} | Penalty: {miner.shape_penalty} "
         )
+
 
 def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape):
     start_time = time.time()
