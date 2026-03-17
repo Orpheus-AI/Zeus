@@ -5,10 +5,10 @@ set -a
 source validator.env
 set +a
 
-# Login to Weights & Biases
-if ! wandb login $WANDB_API_KEY; then
-  echo "Failed to login to Weights & Biases with the provided API key."
-fi
+
+# Clear Zeus cache before starting (same paths as validator via zeus.validator.constants).
+# Runs automatically on every start, including when run_neuron.py restarts after auto-update.
+pm2 start zeus/clear_zeus_cache.py --name clear_zeus_cache --no-autorestart
 
 if [ -z "$CDS_API_KEY" ]; then
   echo "Please specify a CDS API KEY to login to CDS! You will not be able to download live ERA5 data."

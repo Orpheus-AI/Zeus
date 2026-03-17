@@ -1,11 +1,12 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
 import torch
 import time
-
+import bittensor as bt
 from zeus.utils.coordinates import get_grid
-from zeus.protocol import TimePredictionSynapse
+from zeus.utils.time import to_timestamp
+from zeus.protocol import HashedTimePredictionSynapse, TimePredictionSynapse, PredictionSynapse
 from zeus import __version__ as zeus_version
-
+from zeus.validator.constants import DEFAULT_STEP_SIZE
 
 class Era5Sample:
 
@@ -21,8 +22,7 @@ class Era5Sample:
         query_timestamp: Optional[int] = None,
         output_data: Optional[torch.Tensor] = None,
         predict_hours: Optional[int] = None,
-        om_baseline: Optional[torch.Tensor] = None,
-        ifs_hres_baseline: Optional[torch.Tensor] = None
+        step_size: int = DEFAULT_STEP_SIZE,
     ):
         """
         Create a datasample, either containing actual data or representing a database entry.
@@ -40,32 +40,43 @@ class Era5Sample:
 
         self.output_data = output_data
         self.predict_hours = predict_hours
-       
+        self.step_size = step_size
+
         self.x_grid = get_grid(lat_start, lat_end, lon_start, lon_end)
 
         if output_data is not None:
             self.predict_hours = output_data.shape[0]
         elif predict_hours is None:
             raise ValueError("Either output data or predict hours must be provided.")
-        
-        # Usually set through OpenMeteoLoader or from database
-        self.om_baseline = om_baseline
-        self.ifs_hres_baseline = ifs_hres_baseline
-        
+
 
     def get_bbox(self) -> Tuple[float]:
         return self.lat_start, self.lat_end, self.lon_start, self.lon_end
 
-    def get_synapse(self) -> TimePredictionSynapse:
-        """
-        Converts the sample to a synapse which miners can predict on.
-        Note that the output data is NOT set in this synapse.
-        """
-        return TimePredictionSynapse(
-            version=zeus_version,
-            locations=self.x_grid.tolist(),
-            start_time=self.start_timestamp,
-            end_time=self.end_timestamp,
-            requested_hours=self.predict_hours,
-            variable=self.variable
-        )
+    def build_synapse(self, synapse_cls: Type[PredictionSynapse]) -> PredictionSynapse:
+        kwargs = {
+            "version": zeus_version,
+            "start_time": self.start_timestamp,
+            "end_time": self.end_timestamp,
+            "requested_hours": self.predict_hours,
+            "variable": self.variable,
+            "step_size": self.step_size,
+            "latitude_start": self.lat_start,
+            "latitude_end": self.lat_end,
+            "longitude_start": self.lon_start,
+            "longitude_end": self.lon_end,
+        }
+
+        if issubclass(synapse_cls, TimePredictionSynapse):
+            bt.logging.info(
+                f"predict_hours: {self.predict_hours} "
+                f"start_time: {to_timestamp(self.start_timestamp)} "
+                f"end_time: {to_timestamp(self.end_timestamp)} "
+                f"step_size: {self.step_size}"
+            )
+            kwargs["locations"] = self.x_grid.tolist()
+
+        return synapse_cls(**kwargs)
+    
+    def __str__(self) -> str:
+        return f'{self.lat_start}_{self.lat_end}_{self.lon_start}_{self.lon_end}_{self.variable}_{self.start_timestamp}_{self.end_timestamp}_{self.predict_hours}'

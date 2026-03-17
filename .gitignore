@@ -168,3 +168,5 @@ testing/
 *.env
 *~
 wandb/
+zeus-venv/*
+best_prediction/

@@ -18,26 +18,25 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-import time
 import os
-from discord_webhook import DiscordWebhook, DiscordEmbed
+import time
+from typing import List, Set
 
 import bittensor as bt
-import wandb
+from discord_webhook import DiscordEmbed, DiscordWebhook
 from dotenv import load_dotenv
 
 import zeus
-from zeus.validator.uid_tracker import UIDTracker
-from zeus.api.proxy import ValidatorProxy
 from zeus.base.validator import BaseValidatorNeuron
-from zeus.validator.forward import forward
 from zeus.data.loaders.era5_cds import Era5CDSLoader
-from zeus.data.loaders.openmeteo import OpenMeteoLoader
-from zeus.data.difficulty_loader import DifficultyLoader
-from zeus.validator.database import ResponseDatabase
+from zeus.utils.schedule_time import Scheduler
 from zeus.validator.constants import (
     TESTNET_UID,
+    BEST_FORECASTS_DIRECTORY
 )
+from zeus.validator.forward import forward
+from zeus.validator.storage import OptimizedWeatherStorage
+from zeus.validator.uid_tracker import UIDTracker
 
 
 class Validator(BaseValidatorNeuron):
@@ -52,16 +51,15 @@ class Validator(BaseValidatorNeuron):
         self.discord_hook = os.environ.get("DISCORD_WEBHOOK")
 
         self.uid_tracker = UIDTracker(self)
-        self.validator_proxy = ValidatorProxy(self)
-
+        self.time_scheduler = Scheduler()
+        self.latest_good_miners_per_challenge: dict[str, List[int]] = None
+    
         bt.logging.info("Initialising data loaders...")
         self.cds_loader = Era5CDSLoader()
-        self.open_meteo_loader = OpenMeteoLoader()
         bt.logging.info("Finished setting up data loaders.")
 
-        self.database = ResponseDatabase(self.cds_loader)
-        self.difficulty_loader = DifficultyLoader()
-        self.init_wandb()
+        self.database = OptimizedWeatherStorage(self.cds_loader)
+        self.best_predictions_path = BEST_FORECASTS_DIRECTORY
 
     async def forward(self):
         """
@@ -77,11 +75,12 @@ class Validator(BaseValidatorNeuron):
     def prune_hotkeys(self, hotkeys):
         if self.is_running: # make sure init is finalised
             self.database.prune_hotkeys(hotkeys)
+
+    def get_responding_miners_hotkeys(self) -> Set[str]:
+        return self.database.get_responding_miners_hotkeys()
     
     def __exit__(self, exc_type, exc_value, traceback):
         super().__exit__(exc_type, exc_value, traceback)
-        self.validator_proxy.stop_server()
-
 
     def on_error(self, error: Exception, error_message: str):
         super().on_error(error, error_message)
@@ -98,53 +97,8 @@ class Validator(BaseValidatorNeuron):
         )
         embed = DiscordEmbed(title=repr(error), description=error_message)
         embed.set_timestamp()
-        if wandb.run and not wandb.run.offline:
-            embed.add_embed_field(name="", value=f"[WANDB]({wandb.run.get_url()}/logs)", inline=False)
         webhook.add_embed(embed)
         webhook.execute()
-
-    def init_wandb(self):
-        if self.config.wandb.off:
-            return
-
-        run_name = f"validator-{self.uid}-{zeus.__version__}"
-        self.config.run_name = run_name
-        self.config.uid = self.uid
-        self.config.hotkey = self.wallet.hotkey.ss58_address
-        self.config.version = zeus.__version__
-        self.config.type = self.neuron_type
-
-        wandb_project = (
-            self.config.wandb.testnet_project_name
-            if self.config.netuid == TESTNET_UID
-            else self.config.wandb.project_name
-        )
-
-        # Initialize the wandb run for the single project
-        bt.logging.info(
-            f"Initializing W&B run for '{self.config.wandb.entity}/{wandb_project}'"
-        )
-        try:
-            run_id = wandb.init(
-                name=run_name,
-                project=wandb_project,
-                entity=self.config.wandb.entity,
-                config=self.config,
-                dir=self.config.full_path,
-                mode="offline" if self.config.wandb.offline else None
-            ).id
-        except wandb.UsageError as e:
-            bt.logging.warning(e)
-            bt.logging.warning("Did you run wandb login?")
-            return
-
-        # Sign the run to ensure it's from the correct hotkey
-        signature = self.wallet.hotkey.sign(run_id.encode()).hex()
-        self.config.signature = signature
-        wandb.config.update(self.config, allow_val_change=True)
-
-        bt.logging.success(f"Started wandb run {run_name}")
-
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":

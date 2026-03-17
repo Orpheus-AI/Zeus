@@ -14,8 +14,6 @@
 
 ## Installation
 > [!TIP]
-> We highly recommend using AWS for Validators. Since response speed is part of the incentive and we value a subnet which brings value globally, we ideally want to split validators geographically.
-> Please reach out to us and will help select the ideal location for you. 
 
 The instructions below are specifically tailored for AWS.
 1. Deploy an EC2 instance.
@@ -61,7 +59,7 @@ btcli s register --netuid 301 --wallet.name [wallet_name] --wallet.hotkey [walle
 
 ## Validating
 Before launching your validator, make sure to create a file called `validator.env`. This file will not be tracked by git. 
-You can use the sample below as a starting point, but make sure to replace **wallet_name**, **wallet_hotkey**, **axon_port**, **wandb_api_key** and **cds_api_key**.
+You can use the sample below as a starting point, but make sure to replace **wallet_name**, **wallet_hotkey**, **axon_port** and **cds_api_key**.
 
 ```bash
 NETUID=18                                       # Network User ID options: 18,301
@@ -80,22 +78,14 @@ AXON_PORT=
 PROXY_PORT=
 
 # API Keys:
-WANDB_API_KEY=                  # https://wandb.ai/authorize
 CDS_API_KEY=                    # https://github.com/Orpheus-AI/Zeus/blob/main/docs/Validating.md#ecmwf
-OPEN_METEO_API_KEY=             # https://open-meteo.com/en/pricing#plans (Cheapest one suffices)
 PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourself
 
 # Optional integrations
 DISCORD_WEBHOOK=                # https://www.svix.com/resources/guides/how-to-make-webhook-discord/
 ```
-If you don't have a W&B API key, please reach out to Ørpheus A.I. via Discord. Without W&B, miners will not be able to see their live scores, 
-so we highly recommend enabling this.
 
-### 1. OpenMeteo
-In order to validate you need an [OpenMeteo API key](https://open-meteo.com/en/pricing) for the API standard plan. After purchasing, it will be send to your email address!
-So look out for an email from info@open-meteo.com. Please enter the API key in the validator.env file, under the key `OPEN_METEO_API_KEY=mykey`.
-
-### 2. ECMWF
+### ECMWF
 > [!IMPORTANT]
 > In order to send miners challenges involving the latest ERA5 data, you need to provide a Copernicus CDS API key. The steps below explain how to obtain this key. If you encounter any difficulty in the process, please let us know and we will create an account for you.
 
@@ -125,15 +115,27 @@ cd Zeus/
 pm2 start run_neuron.py -- --validator 
 ```
 
-- Auto updates are enabled by default. To disable, run with `--no-auto-updates`.
+- Auto updates are enabled by default. To disable, run with `--no-auto-update`.
 - Self-healing restarts are disabled by default (every 3 hours). To enable, run with `--self-heal`.
+
+### Validator phases (forward pass) 
+
+The validator uses a **commit–reveal** flow so miners cannot copy others’ answers. The logic is in [forward.py](../zeus/validator/forward.py). Each forward pass can run one or more of these phases, depending on the current time and chain state:
+
+| Phase | When it runs | What the validator does |
+|-------|----------------|--------------------------|
+| **1. Hash commit** | At 00:00, 06:00, 12:00, 18:00 UTC (every 6 hours, subject to a minimum interval between requests). | Requests **hashes** of predictions from **all** eligible miners for the current challenge(s). The hashing the miners returns needs to be a function of their hotkey and predictions. Records which miners returned hashes. Miners that fail or don’t respond can be recorded as bad. Implemented in `run_all_hash_phases()`. |
+| **2. Query best (reveal)** | At least one hour after the hash phase, in the same 6‑hour window (when `hour % 6 != 0`). | Queries only a **subset** of miners: those who passed the hash phase and/or are in the historical “top” set. Requests **full predictions** and verifies them against the committed hashes. Miners whose verification fails are marked bad. Implemented in `run_initial_prediction_top_k_phases()`. This step is useful for the proxy. |
+| **3. Scoring** | For challenges whose ground truth is ready, runs the **final prediction phase** | Requests full predictions from miners who committed (if needed), computes RMSE/MAE vs ground truth, calculates the rewards and may call `set_weights()`. Implemented via `database.score_and_prune()` and `run_final_prediction_phase()`. 
+
+Timing is controlled by [schedule_time.py](../zeus/utils/schedule_time.py) (`is_hash_commit_time`, `is_query_best_time`).
 
 ## Hardware requirements
 We strive to make validation as simple as possible on our subnet, aiming to minimise storage and hardware requirements for our validators.
-Only a couple days of environmental data need to be stored at a time, which take around 1GB of storage. Miner predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which can reach around 15GB. 
+Only a couple days of environmental data need to be stored at a time, which take around 1GB of storage. Miner hashes of their predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which can reach around 15GB. 
 Therefore we recommend a total storage of around 80GB, allowing for ample space to install all dependencies and store the miner predictions.
 
 Data processing is done locally, but since this has been highly optimised, you will also **not need any GPU** or CUDA support. You will only need a decent CPU machine, where we recommend having at least 16GB of RAM. Since data is loaded over the internet, it is useful to have at least a moderately decent (>5GBit/s) internet connection.
 
 > [!TIP]
-> Should you need any assistance with setting up the validator, W&B or anything else, please don't hesitate to reach out to the team at Ørpheus A.I. via Discord!
+> Should you need any assistance with setting up the validator or anything else, please don't hesitate to reach out to the team at Ørpheus A.I. via Discord!

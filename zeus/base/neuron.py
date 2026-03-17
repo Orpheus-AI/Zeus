@@ -19,6 +19,7 @@ import copy
 import typing
 
 import bittensor as bt
+import pandas as pd
 
 from abc import ABC, abstractmethod
 
@@ -100,12 +101,16 @@ class BaseNeuron(ABC):
         )
         self.step = 0
 
+        self.last_time_weights_updated = pd.Timestamp.now("UTC")
+
     @abstractmethod
     def run(self): ...
 
-    def sync(self):
+
+    def sync_without_weights(self):
         """
-        Wrapper for synchronizing the state of the network for the given miner or validator.
+        Synchronizes the state of the network (registration and metagraph) 
+        and saves state, but bypasses the weight-setting logic.
         """
         # Ensure miner or validator hotkey is still registered on the network.
         self.check_registered()
@@ -113,11 +118,19 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.resync_metagraph()
 
-        if self.should_set_weights():
-            self.set_weights()
-
         # Always save state.
         self.save_state()
+
+
+    def sync(self):
+        """
+        Wrapper for synchronizing the state of the network for the given miner or validator.
+        """
+        # Ensure miner or validator hotkey is still registered on the network.
+        self.sync_without_weights()
+
+        if self.should_set_weights():
+            self.set_weights()
 
     def check_registered(self):
         # --- Check for registration.
@@ -140,18 +153,23 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length
 
     def should_set_weights(self) -> bool:
+        # Don't set weights if you are a miner
+        if self.neuron_type == "MinerNeuron":
+            return False
+        
         # Don't set weights on initialization.
         if self.step == 0:
             return False
 
-        # Check if enough epoch blocks have elapsed since the last epoch.
-        if self.config.neuron.disable_set_weights:
-            return False
+        # if self.config.neuron.disable_set_weights: # this is set to True in the defalut settings
+        #     return False
 
         # Define appropriate logic for when set weights.
         return (
-            self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
+            len(self.state_per_variable.values()) == 0
+            and 
+            ((pd.Timestamp.now("UTC") - self.last_time_weights_updated) > pd.Timedelta(hours = 10))
+        )
 
     def save_state(self):
         bt.logging.trace(

@@ -12,6 +12,7 @@ from zeus.validator.constants import (
     ERA5_LATITUDE_RANGE,
     ERA5_LONGITUDE_RANGE,
     ERA5_AREA_SAMPLE_RANGE,
+    DEFAULT_STEP_SIZE,
 )
 
 
@@ -19,22 +20,20 @@ class Era5BaseLoader(ABC):
 
     def __init__(
         self,
-        predict_sample_range: Tuple[float, float],
+        max_time_offset: int,
+        step_size: int = DEFAULT_STEP_SIZE,
         data_vars: Dict[str, float] = ERA5_DATA_VARS,
         lat_range: Tuple[float, float] = ERA5_LATITUDE_RANGE,
         lon_range: Tuple[float, float] = ERA5_LONGITUDE_RANGE,
-        area_sample_range: Tuple[ float, float] = ERA5_AREA_SAMPLE_RANGE
-
+        area_sample_range: Tuple[float, float] = ERA5_AREA_SAMPLE_RANGE,
     ) -> None:
         self.data_vars, self.data_var_probs = zip(*sorted(data_vars.items()))
         self.data_var_probs = np.array(self.data_var_probs)
-        
+        self.max_time_offset = max_time_offset
+        self.step_size = step_size
         self.lat_range = sorted(lat_range)
         self.lon_range = sorted(lon_range)
-
         self.area_sample_range = sorted(area_sample_range)
-        self.predict_sample_range = sorted(predict_sample_range)
-
         self.dataset = self.preprocess_dataset(self.load_dataset())
 
     @abstractmethod
@@ -87,7 +86,11 @@ class Era5BaseLoader(ABC):
         )
         lon_end = lon_start + np.random.randint(*self.area_sample_range) / fidelity
         return lat_start, lat_end, lon_start, lon_end
-    
+
+    def get_full_bbox(self) -> Tuple[float, float, float, float]:
+        """Return the full bounding box from lat/lon ranges (lat_start, lat_end, lon_start, lon_end)."""
+        return self.lat_range[0], self.lat_range[1], self.lon_range[0], self.lon_range[1]
+
     def sample_variable(self) -> str:
         norm_probs = self.data_var_probs / self.data_var_probs.sum()
         return np.random.choice(self.data_vars, p=norm_probs)
@@ -100,14 +103,12 @@ class Era5BaseLoader(ABC):
         lon_end: float,
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
-        variables: Optional[Union[str, List[str]]] = None
+        variables: Optional[Union[str, List[str]]] = None,
+        step_size: Optional[int] = None,
     ) -> torch.Tensor:
         """
-        Get a sample from the dataset for a specific location and time range.
-        You can specify the variable (needs to be in self.data_vars), if not all are returned
-
-        Returns:
-         - sample (torch.Tensor): The sample containing the input and output data as a 4D tensor.
+        Get data for a location and time range. If step_size is set, time dimension
+        is subsampled to every step_size-th point (e.g. 3 → 0h, 3h, 6h, ...).
         """
         variables = variables or self.data_vars
         if isinstance(variables, str):
@@ -118,16 +119,20 @@ class Era5BaseLoader(ABC):
             latitude=slice(lat_start, lat_end),
             longitude=slice(lon_start, lon_end),
         )
-        # CDS NC files don't have time but 'valid_time' instead.
-        if "valid_time" in subset.dims:
-            # increment end time to make it inclusive
-            subset = subset.sel(valid_time=slice(start_time, end_time))
-        else:
-            subset = subset.sel(time=slice(start_time, end_time))
+        time_dim = "valid_time" if "valid_time" in subset.dims else "time"
+
+        
+        desired_timesteps = pd.date_range(start=start_time, end=end_time, freq=f'{step_size}h')
+        valid_desired_timesteps = desired_timesteps.intersection(subset[time_dim].values)
+
+        # in the rare case that the era5 files were corrupted and we don't have all the timesteps 
+        if set(desired_timesteps) != set(valid_desired_timesteps):
+            return None # TODO : Check that this makes sense, I changed get_output in era5 cds as well
+        
+        subset = subset.sel({time_dim: valid_desired_timesteps})
 
         y_grid = torch.stack(
             [
-                # only use to_numpy - which computes data - for relevant variable(s)
                 torch.as_tensor(subset[var].to_numpy(), dtype=torch.float)
                 for var in shortcodes
             ],
@@ -149,9 +154,6 @@ class Era5BaseLoader(ABC):
         data = torch.cat([x_grid, y_grid], dim=-1)
         return data
 
-    @abstractmethod
-    def sample_time_range(self) -> Tuple[pd.Timestamp, pd.Timestamp, int]:
-        pass
 
     @abstractmethod
     def get_sample(self) -> Era5Sample:

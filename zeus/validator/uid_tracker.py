@@ -1,10 +1,15 @@
-from typing import List
-import time
+import heapq
+import random
 import threading
+import time
+from typing import List, Set
+
 import bittensor as bt
+
 from zeus.base.validator import BaseValidatorNeuron
-from zeus.utils.uids import get_random_uids
+from zeus.utils.uids import get_available_uids, get_random_uids
 from zeus.validator.constants import MAINNET_UID
+
 
 class UIDTracker:
 
@@ -14,45 +19,40 @@ class UIDTracker:
         self._last_good_uids = set()
         self.lock = threading.Lock()
 
-    def get_random_uids(self, k: int, tries: int = 3, sleep: int = 1) -> List[int]:
-        attempt = 1
-        while True:
-            if attempt > 1:
-                 # sleep here so no delay once we sample miners to add them to our busy-list
-                 bt.logging.warning(f"Failed to sample enough non-busy miner uids, retrying in {sleep} second(s). ATTEMPT {attempt}/{tries}")
-                 time.sleep(sleep)
-
-            miner_uids = get_random_uids(
-                self.validator.metagraph,
-                k,
-                self.validator.config.neuron.vpermit_tao_limit,
-                MAINNET_UID,
-                # on last attempt, we ignore busyness to ensure we are able to query
-                exclude=self.get_busy_uids() if attempt < tries else set()
-            )
-            if len(miner_uids) == k or attempt == tries:
-                self.add_busy_uids(miner_uids)
-                return miner_uids
-            attempt += 1
     
-    # NOTE: since this is access by proxy and forward, need a thread lock!
-    def get_busy_uids(self) -> List[int]:
-        with self.lock:
-            return self._busy_uids
-    
-    def add_busy_uids(self, uids: List[int]):
-        with self.lock:
-            self._busy_uids.update(set(uids))
+    def init_count_map(self):
+        self.count_map = {}
 
-    def mark_finished(self, uids: List[int], good: bool = False):
-        with self.lock:
-            self._busy_uids = self._busy_uids - set(uids)
-            if good:
-                self._last_good_uids = set(uids)
+    def get_next_batch(self, k: int, good_miners_uids: Set[int],allowed_uids: Set[int] = None, allowed_attempts = 2) -> List[int]:
+        
+        all_avail_miner_uids = get_available_uids(
+            self.validator.metagraph,
+            self.validator.config.neuron.vpermit_tao_limit,
+            MAINNET_UID, 
+            exclude=good_miners_uids
+        )
+        if allowed_uids is not None:
+            all_avail_miner_uids = [uid for uid in all_avail_miner_uids if uid in allowed_uids]
 
-    def get_responding_uids(self, k: int) -> List[int]:
-        with self.lock:
-            self._last_good_uids = self._last_good_uids - self._busy_uids
-        responding_uids = list(self._last_good_uids)[:k]
-        self.add_busy_uids(responding_uids)
-        return responding_uids
+        #busy_uids = self.get_busy_uids() if trial_num < ignore_busy_after_step else set()
+        #bt.logging.warning(f"get_next_batch: busy_uids: {busy_uids}")
+        # Create a priority queue: (attempts, uid)
+        # Only include UIDs that are technically available and not 'good' or 'busy'
+        priority_queue = []
+        for uid in all_avail_miner_uids:
+            uid_strike = self.count_map.get(uid, 0)
+            if uid_strike < allowed_attempts:
+                heapq.heappush(priority_queue, (uid_strike, uid))
+
+        selected = []
+        while len(selected) < k and priority_queue:
+            attempts, uid = heapq.heappop(priority_queue)
+            selected.append(uid)
+            # Increment the count for next time
+            self.count_map[uid] = attempts + 1
+        
+
+        return selected
+
+
+

@@ -101,20 +101,6 @@ def add_args(cls, parser):
         default=False,
     )
 
-    parser.add_argument(
-        "--wandb.off",
-        action="store_true",
-        help="Turn off wandb.",
-        default=False,
-    )
-
-    parser.add_argument(
-        "--wandb.offline",
-        action="store_true",
-        help="Runs wandb in offline mode.",
-        default=False,
-    )
-
 
 def add_miner_args(cls, parser):
     """Add miner specific arguments to the parser."""
@@ -159,10 +145,16 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.timeout",
+        "--neuron.hash_timeout",
         type=float,
-        help="The timeout for each forward call in seconds.",
-        default=10,
+        help="The timeout for each forward call in hash phase in seconds.",
+        default=18,
+    )
+    parser.add_argument(
+        "--neuron.prediction_timeout",
+        type=float,
+        help="The timeout for each forward call in prediction phase in seconds.",
+        default=26,
     )
 
     parser.add_argument(
@@ -183,7 +175,7 @@ def add_validator_args(cls, parser):
         "--neuron.disable_set_weights",
         action="store_true",
         help="Disables setting weights.",
-        default=False,
+        default=True,
     )
 
     parser.add_argument(
@@ -201,6 +193,13 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
+        "--neuron.score_time_window",
+        type=int,
+        help="Number of recent rank samples to average when computing weights. Miners with fewer than n samples get weight 0.",
+        default=8,
+    )
+
+    parser.add_argument(
         "--neuron.axon_off",
         "--axon_off",
         action="store_true",
@@ -214,7 +213,7 @@ def add_validator_args(cls, parser):
         "--neuron.burn_percent",
         type=float,
         help="The percentage of the reward to burn.",
-        default=0.9,
+        default=0.95,
     )
 
     parser.add_argument(
@@ -222,27 +221,6 @@ def add_validator_args(cls, parser):
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
         default=4096,
-    )
-
-    parser.add_argument(
-        "--wandb.project_name",
-        type=str,
-        help="The name of the project where you are sending the new run.",
-        default="zeus-subnet",
-    )
-
-    parser.add_argument(
-        "--wandb.testnet_project_name",
-        type=str,
-        help="The name of the project where you are sending the new run for testnet.",
-        default="zeus-testnet",
-    )
-
-    parser.add_argument(
-        "--wandb.entity",
-        type=str,
-        help="The name of the project where you are sending the new run.",
-        default="orpheus-ai",
     )
 
     parser.add_argument(

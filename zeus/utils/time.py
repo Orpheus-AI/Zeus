@@ -6,7 +6,6 @@ import pytz
 def timestamp_to_str(float_timestamp: float) -> str:
     return to_timestamp(float_timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
-
 def get_today(floor: Optional[str] = None) -> pd.Timestamp:
     """
     Copernicus is inside GMT+0, so we can always use that timezone to get the current day and hour matching theirs.

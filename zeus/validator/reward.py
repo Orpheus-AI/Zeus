@@ -16,161 +16,119 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-from typing import List, Optional, Union
-from traceback import format_exception
-from operator import mul, truediv
+import math
+from typing import Dict, List, Optional, Tuple
+
+import bittensor as bt
 import numpy as np
 import torch
-import bittensor as bt
+import time
+from zeus.utils.misc import split_list
+from zeus.data.sample import Era5Sample
+from zeus.utils.compression import decompress_prediction
+from zeus.validator.constants import PERCENTAGE_GOING_TO_WINNER, LATITUDE_WEIGHTS_PATH
 from zeus.validator.miner_data import MinerData
-from zeus.validator.constants import (
-    REWARD_DIFFICULTY_SCALER,
-    AGE_DIFFICULTY_SHIFT,
-    REWARD_RMSE_WEIGHT,
-    REWARD_EFFICIENCY_WEIGHT,
-    MIN_RELATIVE_SCORE,
-    MAX_RELATIVE_SCORE,
-    CAP_FACTOR_EFFICIENCY,
-    EFFICIENCY_THRESHOLD
-)
+from zeus.validator.metrics import custom_rmse, custom_mae
 
 
-def help_format_miner_output(
-    correct_shape: torch.Size, response: torch.Tensor
-) -> torch.Tensor:
-    """
-    Reshape or slice miner output if it is almost the correct shape.
-
-    Args:
-        correct (torch.Tensor): The correct output tensor.
-        response (torch.Tensor): The response tensor from the miner.
-
-    Returns:
-       Sliced/reshaped miner output.
-    """
-    if correct_shape == response.shape:
-        return response
-    
+def should_apply_shape_penalty(correct_shape: torch.Size, prediction: torch.Tensor) -> bool:
     try:
-        if response.ndim - 1 == len(correct_shape) and response.shape[-1] == 1:
-            # miner forgot to squeeze.
-            response = response.squeeze(-1)
-        
-        return response
-    except IndexError:
-        # if miner's output is so wrong we cannot even index, do not try anymore
-        return response
+        if prediction is None: 
+           return True
+            
+        if prediction.numel() != np.prod(correct_shape):
+            bt.logging.warning(f"Shape penalty: {prediction.shape} != {correct_shape}")
+            shape_penalty = True
+        elif not torch.isfinite(prediction).all():
+            bt.logging.warning(f"Shape penalty: {prediction.shape} != {correct_shape}")
+            shape_penalty = True
+        else:
+            shape_penalty = False
 
-
-def get_shape_penalty(correct_shape: torch.Size, response: torch.Tensor) -> bool:
-    """
-    Compute penalty for predictions that are incorrectly shaped or contains NaN/infinities.
-
-    Args:
-        correct (torch.Tensor): The correct output tensor.
-        response (torch.Tensor): The response tensor from the miner.
-
-    Returns:
-        float: True if there is a shape penalty, False otherwise
-    """
-    penalty = False
-    if response.shape != correct_shape:
-        penalty = True
-    elif not torch.isfinite(response).all():
-        penalty = True
-
-    return penalty
-
-def rmse(
-        output_data: torch.Tensor,
-        prediction: torch.Tensor,
-        default: Optional[float] = None,
-) -> float:
-    """Calculates RMSE between miner prediction and correct output"""
-    try:
-        return ((prediction - output_data) ** 2).mean().sqrt().item()
     except Exception as e:
-        # shape error etc
-        if default is None:
-            raise e
-        bt.logging.warning(f"Failed to calculate RMSE between {output_data} and {prediction}. Returning {default} instead!")
-        return default 
+        shape_penalty = True
+        
+    return shape_penalty
 
-def set_penalties(
-    correct_shape: torch.Size,
-    miners_data: List[MinerData],
-) -> List[MinerData]:
+def calculate_competition_ranks(values: list[float], precision: int = 10) -> list[int]:
     """
-    Calculates and sets penalities for miners based on correct shape and their prediction
-
-    Args:
-        output_data (torch.Tensor): ground truth, ONLY used for shape
-        miners_data (List[MinerData]): List of MinerData objects containing predictions.
-
-    Returns:
-        List[MinerData]: List of MinerData objects with penalty fields
+    Pure logic: Transforms a sorted list of values into competition ranks.
+    Input values MUST be sorted.
     """
-    for miner_data in miners_data:
-        # potentially fix inputs for miners
-        miner_data.prediction = help_format_miner_output(correct_shape, miner_data.prediction)
-        shape_penalty = get_shape_penalty(correct_shape, miner_data.prediction)
-        # set penalty, including rmse/reward if there is a penalty
-        miner_data.shape_penalty = shape_penalty
+    if not values:
+        return []
+
+    ranks = []
+    current_rank = 1
+    
+    for i, val in enumerate(values):
+        # Comparison with rounding to handle float noise
+        if val == float('inf') or val is None:
+            inf_rank = len(values)
+            ranks.append(inf_rank)
+            continue
+        if i > 0 and round(val, precision) != round(values[i-1], precision):
+            current_rank = current_rank + 1
+        ranks.append(current_rank)
+        
+    return ranks
+
+
+def set_errors(sample: Era5Sample, miner_uids: List[int], axons_to_query: List, compressed_predictions: List[bytes], expected_shape: torch.Size) -> List[MinerData]:
+
+    output_data = sample.output_data
+    output_data = output_data.to(torch.float16)
+    latitude_weights = np.load(LATITUDE_WEIGHTS_PATH)
+    latitude_weights = torch.from_numpy(latitude_weights).to(output_data.device).to(output_data.dtype)
+    
+    miners_data = []
+    for uid, axon, prediction in zip(miner_uids, axons_to_query, compressed_predictions):
+        hotkey = axon.hotkey
+        if prediction is None:
+            temp_tensor = None
+        else:
+            temp_tensor = decompress_prediction(prediction, expected_shape)
+            
+
+        is_penalized = should_apply_shape_penalty(expected_shape, temp_tensor)
+        if is_penalized:
+            rmse = float('inf')
+            mae = float('inf')
+        else:
+            rmse = custom_rmse(output_data, temp_tensor, latitude_weights)
+            mae = custom_mae(output_data, temp_tensor, latitude_weights) 
+
+        if math.isnan(rmse): rmse = float('inf')
+        if math.isnan(mae): mae = float('inf')
+
+        # prediction is not needed anymore, so we set it to None to save memory
+        miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=None, rmse=rmse, mae = mae, shape_penalty=is_penalized)
+        miners_data.append(miner_data)
     
     return miners_data
 
-def get_curved_scores(
-        raw_scores: List[float], 
-        gamma: float, 
-        max_score: float,
-        cap_factor: Union[float, int] = None,
-        min_score: float = None,
-) -> List[float]:
-    """
-    Given a list of raw float scores (can by any range),
-    normalise them to 0-1 scores,
-    and apply gamma correction to curve accordingly.
-
-    Note that minimal and maximal error can each capped.
-     - through the cap_factor (between 0-1), so that:
-       median_score * (1 - cap_factor) <= score <= median_score * (1 + cap_factor),
-    - Through specifying the min and max artificially
-    If neither is specified, will be the actual min/max of the scores,
-        which might allow abuse through distribution shifting.
-
-    # NOTE: This function assumes higher is better! 
-    # So if you require the opposite, simply make your raw_scores their negative
-    """
-
-    if min_score is None:
-        if cap_factor is None:
-            # if all better than max, everyone gets perfect score here.
-            min_score = min(max_score, min(raw_scores))
+def calculate_scores(miners_data: List[MinerData]) -> List[MinerData]:
+    for miner in miners_data:
+        if miner.rmse is None or miner.mae is None:
+            score = float('inf')
+        else:	
+            score = (miner.rmse + miner.mae)/2
         
-        operator = truediv if max_score > 0 else mul
-        median_bound = operator(np.median(raw_scores), cap_factor)
-        max_bound = operator(max_score, cap_factor)
-        min_score = min(median_bound, max_bound)
+        miner.score = score
+    return miners_data
 
-    result = []
-    for score in raw_scores:
-        if max_score == min_score:
-            result.append(1.0) # edge case, avoid division by 0
-        else:
-            capped_score = max(min_score, min(score, max_score))
-            norm_score = (capped_score - min_score) / (max_score - min_score)
-            result.append(np.power(norm_score, gamma)) # apply gamma correction
-    
-    return result
-    
+# the score is average of the two errors (rmse and mae), breaks ties based on rmse, mae and uid in this priority
+# None metrics sort last (treated as worst)
+def _sort_key(m):
+    return (
+        m.score if m.score is not None else float("inf"), # lower is better
+        m.rmse if m.rmse is not None else float("inf"),
+        m.mae if m.mae is not None else float("inf"),
+        m.uid or 0,
+    )
 
 def set_rewards(
-    output_data: torch.Tensor,
     miners_data: List[MinerData],
-    baseline_data: Optional[torch.Tensor],
-    difficulty_grid: np.ndarray,
-    challenge_age: float,
-    epsilon: float = 1e-12,
 ) -> List[MinerData]:
     """
     Calculates rewards for miner predictions based on RMSE and relative difficulty.
@@ -180,39 +138,173 @@ def set_rewards(
     Args:
         output_data (torch.Tensor): The ground truth data.
         miners_data (List[MinerData]): List of MinerData objects containing predictions.
-        baseline_data (torch.Tensor): OpenMeteo prediction, where additional incentive is awarded to beat this!
         difficulty_grid (np.ndarray): Difficulty grid for each coordinate.
 
     Returns:
         List[MinerData]: List of MinerData objects with updated rewards and metrics.
     """
-    miners_data = [m for m in miners_data if not m.shape_penalty]
+    # 1. Calculate the score
+    miners_data = calculate_scores(miners_data)
+    
+    # Sort the miners based on the score, which is an average of the rmse and mae
+    sorted_miners = sorted(miners_data, key=_sort_key)
+    
+    # 2. Extract values for the pure logic function
+    rmses = [m.rmse for m in sorted_miners]
+    
+    # 3. Get ranks and assign them
+    # The miners are already sorted based on their score, the ranks are calculated based on that sort, 
+    # we pass the rmse here because if two miners have (almost) the same rmse we give them the same rank
+    # otherwise if two miners have rmse of X one would be unfairly given rank lower than the other one
+    ranks = calculate_competition_ranks(rmses)
+    
+    for miner, rank in zip(sorted_miners, ranks):
+        miner.score = float(rank)
 
-    if len(miners_data) == 0:
-        return miners_data
+    return sorted_miners
 
-    baseline_rmse = rmse(output_data, baseline_data, default=0)
-    avg_difficulty = difficulty_grid.mean()
-    # make difficulty [-1, 1], then go between [1/scaler, scaler]
-    diff_gamma = np.power(REWARD_DIFFICULTY_SCALER, avg_difficulty * 2 - 1)
-    # challenges far in future are now considered more difficult
-    gamma = 1 / (diff_gamma + max(0, challenge_age + AGE_DIFFICULTY_SHIFT))
+def compute_min_rank_weights(
+    metagraph_size: int,
+    hotkeys: List[str],
+    uids: List[int],
+    rank_history: Dict[str, List[float]],
+    window_size: int,
+    miners_hotkeys: List[str],
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Computes weights by 
+    1) calculating a rank for each hotkey by taking the average of their last window_size ranks from rank_history
+     - if a hotkey doesn't have a rank history we give it a rank infinity.
+    2) giving PERCENTAGE_GOING_TO_WINNER of the weight to the first one and logarithmically to the rest. 
+    3) break ties based on the latest ranks. 
 
-    # compute unnormalised scores
-    for miner_data in miners_data:
-        miner_data.rmse = rmse(output_data, miner_data.prediction)
-        # zero devision proof relative improvement
-        improvement = (baseline_rmse - miner_data.rmse + epsilon) / (baseline_rmse + epsilon)
-        miner_data.baseline_improvement = improvement
+    Return
+    -------
+    np.ndarray
+        Weight vector of shape (metagraph_size,) with PERCENTAGE_GOING_TO_WINNER going to the "best" miner.
 
-    #  Cap between 100% worse and 80% better than OpenMeteo
-    quality_scores = get_curved_scores([m.baseline_improvement for m in miners_data], gamma, min_score=MIN_RELATIVE_SCORE, max_score=MAX_RELATIVE_SCORE)
-    # negative since curving assumes maximal is the best. gamma=1 since challenge content doesn't matter here.
-    efficiency_scores = get_curved_scores([-m.response_time for m in miners_data], gamma=1, max_score=-EFFICIENCY_THRESHOLD, cap_factor=CAP_FACTOR_EFFICIENCY)
+    """
+    # Step 1: Calculate average rank for each hotkey
+    miners_metadata = []
+    for uid, hotkey in zip(uids, hotkeys):
+        if hotkey not in miners_hotkeys: continue
+        history = rank_history.get(str(hotkey), [])
+        
+        if len(history) >= window_size:
+            last_n = history[-window_size:]
+            avg_rank = np.mean(last_n)
+            # For tie-breaking: use ranks in reverse chronological order (most recent first)
+            # This allows breaking ties by comparing second-to-last, third-to-last, etc.
+            tie_breaker = tuple(reversed(last_n))
+        else:
+            avg_rank = float('inf')
+            tie_breaker = (float('inf'),) * window_size
+        
+        miners_metadata.append({
+            'uid': uid,
+            'hotkey': hotkey,
+            'avg_rank': avg_rank,
+            'tie_breaker': tie_breaker
+        })
+    
+    # Step 2: Sort by average rank, breaking ties with ranks in reverse chronological order
+    # Lower rank is better, so we sort by (avg_rank, tie_breaker)
+    # tie_breaker is a tuple of ranks from most recent to oldest, so tuple comparison works correctly
+    miners_metadata.sort(key=lambda x: (x['avg_rank'], x['tie_breaker']))
+    
+    best_10_miners_hotkeys = [m["hotkey"] for m in miners_metadata[:10]]
+    # Step 3: Assign weights
+    weights = np.zeros(metagraph_size)
+        
+    # Best miner gets PERCENTAGE_GOING_TO_WINNER
+    best_uid = miners_metadata[0]['uid']
+    bt.logging.debug(f"The best miner has uid : {best_uid}") 
+    bt.logging.debug(f"Full information for this miner : {miners_metadata[0]}")
+    weights[best_uid] = PERCENTAGE_GOING_TO_WINNER
+    
+    # Remaining weight distributed logarithmically among the rest
+    remaining_weight = 1.0 - PERCENTAGE_GOING_TO_WINNER
+    remaining_miners = miners_metadata[1:]
+    
+    if len(remaining_miners) > 0:
+        # Create logarithmic weights for remaining miners (decreasing: better miners get more)
+        # Using log(n+1-i) where i is the index (0-indexed from the second miner)
+        # This gives decreasing weights: log(n), log(n-1), ..., log(2)
+        n = len(remaining_miners)
+        log_weights = []
+        for i in range(n):
+            log_weights.append(math.log(n + 1 - i))
+        
+        # Normalize logarithmic weights to sum to remaining_weight
+        total_log = sum(log_weights)
+        if total_log > 0:
+            for i, miner_data in enumerate(remaining_miners):
+                uid = miner_data['uid']
+                weights[uid] = remaining_weight * (log_weights[i] / total_log)
+        else:
+            # Fallback: equal distribution if log weights sum to 0
+            equal_weight = remaining_weight / len(remaining_miners)
+            for miner_data in remaining_miners:
+                uid = miner_data['uid']
+                weights[uid] = equal_weight
+    
+    return weights, best_10_miners_hotkeys
 
-    for miner_data, quality, efficiency in zip(miners_data, quality_scores, efficiency_scores):
-        miner_data.quality_score = quality
-        miner_data.efficiency_score = efficiency
-        miner_data.score = REWARD_RMSE_WEIGHT * quality + REWARD_EFFICIENCY_WEIGHT * efficiency
 
-    return miners_data
+def complete_challenge(
+    self,
+    sample: Era5Sample,
+    miners_data: List[MinerData],
+) -> Optional[List[MinerData]]:
+    """
+    Complete a challenge by reward all miners. Based on hotkeys to also work for delayed rewarding.
+    Note that non-responding miners (which get a penalty) have already been excluded.
+    """
+    correct_shape = sample.output_data.shape
+    bt.logging.warning(f"complete_challenge: correct_shape: {correct_shape} miners_data: {len(miners_data)} {sample.variable}")
+    miners_data = set_rewards(
+        miners_data=miners_data, 
+    )
+    bt.logging.warning(f"miners_data: {len(miners_data)}")
+
+    self.update_scores(
+        [miner.score for miner in miners_data],
+        [miner.hotkey for miner in miners_data],
+        sample.variable
+    )
+    
+    bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
+    
+    for miner in miners_data:
+        #if miner.prediction is None: continue
+        bt.logging.warning(
+            f"UID: {miner.uid} |  rmse: {miner.rmse} | mae: {miner.mae} | score (rank) {miner.score} | Penalty: {miner.shape_penalty} "
+        )
+
+def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape):
+    start_time = time.time()
+    miners_data = set_errors(sample, miner_uids, axons_to_query, compressed_predictions, expected_shape)
+    end_time = time.time()
+    bt.logging.success(f"Time taken to parse miners_data: {end_time - start_time} seconds")
+
+    good_miners_list, bad_miners_list = split_list(
+        miners_data, lambda m: not m.shape_penalty
+    )
+
+    if len(bad_miners_list) > 0:
+        bad_uids = [miner.uid for miner in bad_miners_list]
+        bt.logging.success(f"Punishing miners that got a penalty: {bad_uids}")
+
+    good_uids = set()
+    if len(good_miners_list) > 0:
+        good_uids = set([m.uid for m in good_miners_list])
+        bt.logging.success(f"[calculate_rmses] Good Miners : {good_uids} got their scores calculated")
+
+    bt.logging.success(f"Miners data length: {len(miners_data)}")
+ 
+    # Introduce a delay to prevent spamming requests
+    time.sleep(10) #max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
+    return good_miners_list
+
+
+

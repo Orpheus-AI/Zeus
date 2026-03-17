@@ -1,5 +1,7 @@
-from typing import List, Tuple, Dict
 from pathlib import Path
+from typing import Dict, List, Tuple
+
+from zeus.base.dendrite import DendriteSettings
 
 # ------------------------------------------------------
 # ------------------ General Constants -----------------
@@ -9,82 +11,54 @@ MAINNET_UID = 18
 
 FORWARD_DELAY_SECONDS = 90
 
-# how many miners proxy queries
-PROXY_QUERY_K = 10
+
+# Hash phase: high concurrency, batch size, retries
+HASH_DENDRITE_SETTINGS = DendriteSettings(
+    forward_concurrency=125,
+    response_batch_k=125,
+    attempts_per_miner=3,
+    max_response_body_bytes=1024 * 1024 * 10,
+)
+# Prediction phase: lower concurrency, same batch/retry semantics
+PREDICTION_DENDRITE_SETTINGS = DendriteSettings(
+    forward_concurrency=13,
+    response_batch_k=39,
+    attempts_per_miner=2,
+    max_response_body_bytes=1024 * 1024 * 110,
+)
+
 # after how many percent of above it yields results
-PROXY_CUTOFF_PERCENT = 0.6
+RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be larger than window size used for ranking
 
-# wandb website refuses to update logs after roughly 100k, so reset run if this happens
-WANDB_MAX_LOGS = 95_000
-
-# the variables miners are tested on, with their respective sampling weight
+# the corresponding ERA5 variables miners are tested on with their scoring weight
 ERA5_DATA_VARS: Dict[str, float] = {
-    "2m_temperature": 0.3,
-    "total_precipitation": 0.15,
-    "100m_u_component_of_wind": 0.15,
-    "100m_v_component_of_wind": 0.15,
-    "2m_dewpoint_temperature": 0.125,
-    "surface_pressure": 0.125
+    "2m_temperature": 0.2, 
+    "100m_u_component_of_wind": 0.4,
+    "100m_v_component_of_wind": 0.4,
 }
 ERA5_LATITUDE_RANGE: Tuple[float, float] = (-90.0, 90.0)
 ERA5_LONGITUDE_RANGE: Tuple[float, float] = (-180.0, 179.75)  # real ERA5 ranges
+ERA5_RESOLUTION = 0.25
 # how many datapoints we want. The resolution is 0.25 degrees, so 4 means 1 degree.
-ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16)
-
-# ------------------------------------------------------
-# ------------------ Reward Constants -----------------
-# ------------------------------------------------------
-# 1.0 would imply no difficulty scaling, should be >= 1.
-REWARD_DIFFICULTY_SCALER = 2.0
-# age difficulty goes -1 to 1 by default, shift it by value below (and make it always positive)
-AGE_DIFFICULTY_SHIFT = 1
-
-# 70% of emission for quality, 30% for speed
-REWARD_RMSE_WEIGHT = 0.8
-REWARD_EFFICIENCY_WEIGHT = 0.2
-# score is percentage worse/better than OpenMeteo baseline. Capped between these percentages (as float)
-MIN_RELATIVE_SCORE = -1.0
-MAX_RELATIVE_SCORE = 0.8
-# when curving scores, above cap * median_speed = 0
-# to prevent reward curve from being shifted by really bad outlier
-CAP_FACTOR_EFFICIENCY = 2.0
-# Faster than this is considered 'perfect'
-EFFICIENCY_THRESHOLD = 0.4
-
+ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16) # 
 # ------------------------------------------------------
 # --------------- Current/Future prediction-------------
 # ------------------------------------------------------
-ERA5_CACHE_DIR: Path = Path.home() / ".cache" / "zeus" / "era5"
-DATABASE_LOCATION: Path = Path.home() / ".cache" / "zeus" / "challenges.db"
+CURRENT_DIRECTORY: Path = Path.home()
+
+BEST_FORECASTS_DIRECTORY: Path = CURRENT_DIRECTORY  / "Zeus" / "best_prediction" 
+ERA5_CACHE_DIR: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "era5"
+OLD_METADATA_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "challenges.db"
+METADATA_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "challenges_v2.db"
+LATITUDE_WEIGHTS_PATH: Path = CURRENT_DIRECTORY / "Zeus" / "zeus" / "data" / "weights" / "latitude_weights_for_rmse.npy" 
 COPERNICUS_ERA5_URL: str = "https://cds.climate.copernicus.eu/api"
 
-LIVE_START_OFFSET_RANGE: Tuple[int, int] = (-119, 168)  # 4 days and 23 hours ago <---> until 7 days in future
-LIVE_UNIFORM_START_OFFSET_PROB: float = 0.1
-LIVE_HOURS_PREDICT_RANGE: Tuple[float, float] = (1, 25) # how many hours ahead we want to predict.
+DEFAULT_STEP_SIZE: int = 1  # hours between prediction time steps (synapse default)
+TIME_OFFSET_PER_CHALLENGE: int = 48  # each challenge requests 48 hours; two challenges cover full window
+MIN_HOURS_BETWEEN_REQUESTS = 5
 
-# see plot of distribution in Zeus/static/era5_start_offset_distribution.png
-LIVE_START_SAMPLE_STD: float = 35 
 
-# ------------------------------------------------------
-# ------------ OpenMeteo (SOTA comparisons) ------------
-# ------------------------------------------------------
-OPEN_METEO_URL: str = "https://customer-api.open-meteo.com/v1/forecast"
+MAX_TIME_OFFSET: int = 48  # full window steps (cache range); challenges run as two 24-step requests
+PERCENTAGE_GOING_TO_WINNER = 0.95
 
-# ------------------------------------------------------
-# ---------- Historic prediction (UNUSED) --------------
-# ------------------------------------------------------
-# ERA5 data loading constants
-GCLOUD_ERA5_URL: str = (
-    "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
-)
-
-HISTORIC_INPUT_HOURS: int = 120 # How many hours of data we send miners
-HISTORIC_HOURS_PREDICT_RANGE: Tuple[float, float] = (1, 9) # how many hours ahead we want to predict.
-HISTORIC_DATE_RANGE: Tuple[str, str] = (
-    "1960-01-01",
-    "2024-10-31",
-)  # current latest inside that Zarr archive
-
-MIN_INTERPOLATION_DISTORTIONS = 5
-MAX_INTERPOLATION_DISTORTIONS = 50
 

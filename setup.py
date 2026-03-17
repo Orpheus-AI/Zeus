@@ -52,7 +52,7 @@ here = path.abspath(path.dirname(__file__))
 with open(path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
-# loading version from setup.py
+# loading version from zeus/__init__.py
 with codecs.open(os.path.join(here, "zeus/__init__.py"), encoding="utf-8") as init_file:
     version_match = re.search(
         r"^__version__ = ['\"]([^'\"]*)['\"]", init_file.read(), re.M
@@ -69,7 +69,7 @@ setup(
     author="orpheus-ai.nl",
     packages=find_packages(),
     include_package_data=True,
-    author_email="eric@orpheus-ai.nl",
+    author_email="wouter@orpheus-ai.nl",
     license="MIT",
     python_requires=">=3.8",
     install_requires=requirements,
