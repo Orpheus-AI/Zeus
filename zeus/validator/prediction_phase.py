@@ -15,11 +15,7 @@ from zeus.data.sample import Era5Sample
 from zeus.protocol import TimePredictionSynapse
 from zeus.utils.compression import decompress_prediction
 from zeus.utils.time import to_timestamp
-from zeus.validator.constants import (
-    BLOCK_TIME_SECONDS,
-    ATTEMPTS_PER_MINER,
-    FORWARD_RESPONSE_BATCH_K,
-)
+from zeus.validator.constants import PREDICTION_DENDRITE_SETTINGS
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (
     _build_bad_miners_data,
@@ -42,7 +38,7 @@ def filter_eligible_miners_for_scoring(
     and registered before the challenge query timestamp). Returns
     (axons_to_query_all, uids_to_query_all, commitment_dict).
     """
-    # TODO check if this is correct
+
 
     # create lists of MinerData objects for the miners that are in the challenge and registered before the challenge query timestamp
     miners_uids = []
@@ -75,7 +71,7 @@ async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_l
 
  
     start_time = time.time()
-    responses: List[TimePredictionSynapse] = await self.dendrite(
+    responses: List[TimePredictionSynapse] = await self.dendrite_prediction(
         axons=axons_to_query,
         synapse=sample.build_synapse(TimePredictionSynapse),
         deserialize=False,
@@ -86,7 +82,7 @@ async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_l
 
 
     compressed_predictions = create_compressed_predictions(responses)
-    # TODO is the order of the responses the same as the order of the axons always?
+ 
     compressed_predictions = _verify_hashes(axons_to_query, compressed_predictions, hashes_list)
     return compressed_predictions
 
@@ -150,7 +146,8 @@ def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_ha
             uids_to_query.append(uid)
             hotkeys_to_query.append(good_hashing_hotkeys[index])
             hashes_of_queried.append(good_hashes[index])
-        except ValueError:
+        except Exception as e:
+            bt.logging.warning(f"[_select_top_k_miners_to_query] Error: {e}")
             bt.logging.warning(f"[_select_top_k_miners_to_query] Hotkey {hotkey} not found in good hashing hotkeys. Skipping.")
             continue
 
@@ -196,24 +193,27 @@ def find_allowed_miners_to_query(new_hotkeys2uids, previous_hotkeys2uids):
 
     return allowed_hotkeys_to_query, allowed_uids_to_query
 
-def filter_good_hashing_miners_data(good_hashing_miners_data, allowed_hotkeys_to_query):
+def filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query):
     """Filter miner data to only include miners with allowed hotkeys.
     
     Args:
-        good_hashing_miners_data: List of MinerData objects
+        good_hashes: List of good hashes
+        good_hotkeys: List of good hotkeys
         allowed_hotkeys_to_query: List of allowed hotkeys to filter by
         
     Returns:
-        Filtered list of MinerData objects
+        Filtered list of good hashes, good hotkeys
     """
-    good_hashing_miners_data_filtered = []
-    for miner in good_hashing_miners_data:
-        if miner.hotkey in allowed_hotkeys_to_query:
-            good_hashing_miners_data_filtered.append(miner)
+    filtered_hashes = []
+    filtered_hotkeys = []
+    for hashed_prediction, hotkey in zip(good_hashes, good_hotkeys):
+        if hotkey in allowed_hotkeys_to_query:
+            filtered_hashes.append(hashed_prediction)
+            filtered_hotkeys.append(hotkey)
 
-    return good_hashing_miners_data_filtered
+    return filtered_hashes, filtered_hotkeys
 
-async def run_initial_prediction_top_k_phases(self, challenges, good_hashing_miners_data_per_challenge, previous_hotkeys2uids):
+async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys2uids):
     """Run initial prediction phase querying top K miners for each challenge.
     
     Args:
@@ -222,10 +222,8 @@ async def run_initial_prediction_top_k_phases(self, challenges, good_hashing_min
         good_hashing_miners_data_per_challenge: Dictionary mapping challenge strings to lists of MinerData
         previous_hotkeys2uids: Previous dictionary mapping hotkeys to UIDs for consistency checking
     """
-    if good_hashing_miners_data_per_challenge is None:
-        bt.logging.warning("[run_initial_prediction_top_k_phases] No good hashing miners data per challenge; returning.")
-        return
-
+   
+    bt.logging.debug("[run_initial_prediction_top_k_phases] Process starting.")
     new_hotkeys2uids = {axon.hotkey: uid for uid, axon in enumerate(self.metagraph.axons)}
     allowed_hotkeys_to_query, allowed_uids_to_query = find_allowed_miners_to_query(new_hotkeys2uids, previous_hotkeys2uids)
 
@@ -234,11 +232,16 @@ async def run_initial_prediction_top_k_phases(self, challenges, good_hashing_min
         target_variables = sample.variable
         sample_str = str(sample)
 
-        good_hashing_miners_data = good_hashing_miners_data_per_challenge[sample_str]
-        good_hashing_miners_data = filter_good_hashing_miners_data(good_hashing_miners_data, allowed_hotkeys_to_query)
+        good_hashes, good_hotkeys = self.database.get_hashing_data_for_sample(sample)
+        bt.logging.info(f"[run_initial_prediction_top_k_phases] Good hashes: {good_hashes} Good hotkeys: {good_hotkeys}")
+        if good_hashes == [] or good_hotkeys == []:
+            bt.logging.warning(f"[run_initial_prediction_top_k_phases] No good hashing miners found for sample {sample_str}. Skipping.")
+            continue
+
+        filtered_good_hashes, filtered_good_hotkeys = filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query)
         
-        good_hashing_hotkeys = [miner.hotkey for miner in good_hashing_miners_data]
-        good_hashes = [miner.prediction_hash for miner in good_hashing_miners_data]
+        
+
 
         if target_variables in self.state_per_variable:
             best_10_hotkeys = self.state_per_variable[target_variables].best_10_miners  
@@ -246,13 +249,13 @@ async def run_initial_prediction_top_k_phases(self, challenges, good_hashing_min
             best_10_hotkeys = []
 
         
-        hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_hashes, new_hotkeys2uids, sample_str)
+        hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_10_hotkeys, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
 
 
         expected_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
         good_miners_data, bad_miners_data = await run_prediction_phase(self, sample, uids_to_query, hashes_of_queried, expected_shape, calculate_metrics = False)
- 
-        #self.save_best_miner_prediction(sample, good_miners_data[0], query_random_miners)
+        if len(good_miners_data) > 0:
+            save_best_miner_prediction(self, sample, good_miners_data[0], query_random_miners)
 
         bad_hotkeys = [miner.hotkey for miner in bad_miners_data]
         if len(bad_hotkeys) > 0:
@@ -277,11 +280,11 @@ async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids
         MinerData objects with valid predictions, and bad_miners_data contains
         MinerData objects for miners that failed
     """
+    settings = PREDICTION_DENDRITE_SETTINGS
     bt.logging.info(f'[run_prediction_phase] The number of all miners uids is {len(all_uids_to_query)}')
-    steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / FORWARD_RESPONSE_BATCH_K)
+    steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / settings.response_batch_k)
 
-    ignore_busy_after_step = steps_to_see_everyone_once
-    forward_max_uid_attempts = steps_to_see_everyone_once * ATTEMPTS_PER_MINER
+    forward_max_uid_attempts = steps_to_see_everyone_once * settings.attempts_per_miner
     
     good_miners_uids: set[int] = set()
     good_miners_data = []
@@ -293,17 +296,18 @@ async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids
     for attempt in range(forward_max_uid_attempts):
         # Exclude only good_miners so we never re-query them; bad miners can be sampled again
         miner_uids = self.uid_tracker.get_next_batch(
-            k=FORWARD_RESPONSE_BATCH_K,
+            k=settings.response_batch_k,
             good_miners_uids=good_miners_uids,
-            trial_num=attempt,
-            ignore_busy_after_step=ignore_busy_after_step,
-            allowed_uids=all_uids_to_query
+            allowed_uids=all_uids_to_query,
+            allowed_attempts=settings.attempts_per_miner
         )
+      
+        axons_to_query = [self.metagraph.axons[uid] for uid in miner_uids]
+ 
         if not miner_uids:
             bt.logging.info("[run_prediction_phase] No miners in this batch have a valid prediction. Skipping.")
             continue
 
-        axons_to_query = [self.metagraph.axons[uid] for uid in miner_uids]
 
 
         hashes_for_batch = [uid_to_hash[uid] for uid in miner_uids]

@@ -18,12 +18,12 @@
 # DEALINGS IN THE SOFTWARE.
 
 from abc import ABC
-import base64
+from typing import Optional
+
 import bittensor as bt
 import torch
-
 from pydantic import Field
-from typing import List, Tuple, Optional
+
 from zeus.utils.compression import decode_base64_to_compressed, decompress_prediction
 
 

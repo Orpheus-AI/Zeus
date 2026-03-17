@@ -169,3 +169,4 @@ testing/
 *~
 wandb/
 zeus-venv/*
+best_prediction/

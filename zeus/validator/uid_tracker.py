@@ -8,7 +8,7 @@ import bittensor as bt
 
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.utils.uids import get_available_uids, get_random_uids
-from zeus.validator.constants import MAINNET_UID, PERMITTED_MINER_STRIKES, FORWARD_RESPONSE_BATCH_K
+from zeus.validator.constants import MAINNET_UID
 
 
 class UIDTracker:
@@ -23,7 +23,7 @@ class UIDTracker:
     def init_count_map(self):
         self.count_map = {}
 
-    def get_next_batch(self, k: int, good_miners_uids: Set[int], trial_num: int, ignore_busy_after_step: int, allowed_uids: Set[int] = None) -> List[int]:
+    def get_next_batch(self, k: int, good_miners_uids: Set[int],allowed_uids: Set[int] = None, allowed_attempts = 2) -> List[int]:
         
         all_avail_miner_uids = get_available_uids(
             self.validator.metagraph,
@@ -41,7 +41,7 @@ class UIDTracker:
         priority_queue = []
         for uid in all_avail_miner_uids:
             uid_strike = self.count_map.get(uid, 0)
-            if uid_strike < PERMITTED_MINER_STRIKES:
+            if uid_strike < allowed_attempts:
                 heapq.heappush(priority_queue, (uid_strike, uid))
 
         selected = []

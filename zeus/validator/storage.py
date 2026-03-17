@@ -23,13 +23,14 @@ import xarray as xr
 def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_random: bool):
     # this is for the proxy to save the best miner prediction after the hash phase is done!
 
+    bt.logging.info(f"[save_best_miner_prediction] Begining the process for miner uid {miner.uid}, which is random = {is_random}")
     start_time = sample.start_timestamp
     start_time_timestamp = to_timestamp(start_time)
     start_time_str = start_time_timestamp.strftime("%Y%m%d%H")
     end_time = sample.end_timestamp
     end_time_timespamp =  to_timestamp(end_time)
     end_time_str = end_time_timespamp.strftime("%Y%m%d%H")
-    correct_shape = sample.output_data.shape
+    correct_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
 
     prediction = decompress_prediction(miner.prediction, correct_shape)
     
@@ -41,21 +42,23 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     
     # Convert torch tensor to numpy array and save
     prediction_numpy = prediction.detach().cpu().numpy()
-    time = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
+    time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
 
     xr_dataarray = xr.DataArray(
         data = prediction_numpy, 
         dims = ["time", "latitude", "longitude"],
         coords = dict(
-            time = time,
-            latitude = np.arange(sample.lat_start, sample.lat_end+0.25, 0.25), # TODO change the 0.25 to a constant
+            time = time_coords,
+            latitude = np.arange(sample.lat_start, sample.lat_end+0.25, 0.25), 
             longitude = np.arange(sample.lon_start, sample.lon_end+0.25, 0.25)
         ))
     randomness_tag = "random" if is_random else "best" 
-    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_{randomness_tag}_miner.zarr"
+    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_{randomness_tag}_miner.nc"
     filepath = os.path.join(variable_folder, filename)
-    xr_dataarray.to_zarr(filepath, prediction_numpy)
-    bt.logging.success(f"Saved best miner prediction to {filepath}")
+    # Convert DataArray to Dataset with the variable name set to the sample.variable
+    xr_dataset = xr.Dataset({sample.variable: xr_dataarray})
+    xr_dataset.to_netcdf(filepath)
+    bt.logging.success(f"[save_best_miner_prediction] Saved best miner prediction to {filepath}")
 
 class OptimizedWeatherStorage:
     def __init__(
@@ -82,7 +85,7 @@ class OptimizedWeatherStorage:
             return False
         now = pd.Timestamp.now('UTC')
         if now.hour%6 != 0 and now.hour%6 != 5 and now.hour%6 != 4:
-            bt.logging.warning("It is okay time to try to score")
+            bt.logging.info("It is okay time to try to score")
             return True
         return False
 
@@ -132,7 +135,7 @@ class OptimizedWeatherStorage:
         """
         Insert a challenge and responses into the database.
         If a challenge already exists find the uid and insert the responses
-        If a challenge doesn't exist, insert the challenge and the reponses
+        If a challenge doesn't exist, insert the challenge and the responses
         
         Return :
             boolean : whether the insertion was successful
@@ -151,11 +154,50 @@ class OptimizedWeatherStorage:
         success = self._insert_hash_responses(challenge_uid, miners_data, good_miners)
 
         if success:
-            bt.logging.warning(f"insert: success for challenge_uid={challenge_uid}, {len(miners_data)} miner responses")
+            bt.logging.success(f"insert: success for challenge_uid={challenge_uid}, {len(miners_data)} miner responses")
         else:
             bt.logging.warning(f"insert: _insert_hash_responses failed for challenge_uid={challenge_uid}")
         return success
      
+    def get_hashing_data_for_sample(self, sample: Era5Sample) -> Tuple[List[str], List[str]]:
+        """
+        Given a sample, find the corresponding challenge and return 
+        the hashes, hotkeys, and uids of miners who submitted a hash.
+        """
+        challenge_uid = self._find_challenge_id(sample)
+        
+        if challenge_uid is None:
+            bt.logging.warning(f"get_hashing_data_for_sample: No challenge found for sample at {sample.start_timestamp}")
+            return [], []
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            # Standard JOIN ensures we only get miners who actually have a hash record
+            cursor.execute("""
+                SELECT 
+                    hash, 
+                    miner_hotkey
+                FROM hash_responses 
+                WHERE challenge_uid = ?;
+            """, (challenge_uid,))
+
+            results = cursor.fetchall()
+            
+            if not results:
+                return [], []
+
+            hashes = [r[0] for r in results]
+            hotkeys = [r[1] for r in results]
+
+            return hashes, hotkeys
+
+        except Exception as e:
+            bt.logging.error(f"get_hashing_data_for_sample: Failed to retrieve data — {e}")
+            return [], []
+        finally:
+            conn.close()
+
     def _find_challenge_id(self, sample: Era5Sample):
         """
         Check if a challenge matching the sample already exists in the database.
@@ -193,44 +235,6 @@ class OptimizedWeatherStorage:
         finally:
             conn.close()
     
-    def get_hotkeys_and_hashes(self, sample: Era5Sample, hotkeys: List[str]) -> List[Tuple[str, str]]:
-        """
-        For a given sample and list of hotkeys, return (hotkey, hash) pairs for those
-        hotkeys that have a stored hash for this challenge. Hotkeys not in the
-        challenge or without a hash are omitted.
-        """
-        challenge_uid = self._find_challenge_id(sample)
-        if challenge_uid is None:
-            bt.logging.debug("get_hotkeys_and_hashes: no challenge found for sample")
-            return [], []
-        if not hotkeys:
-            return [], []
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.cursor()
-            placeholders = ",".join("?" for _ in hotkeys)
-            cursor.execute(
-                f"""
-                SELECT miner_hotkey, hash FROM hash_responses
-                WHERE challenge_uid = ? AND miner_hotkey IN ({placeholders});
-                """,
-                (challenge_uid, *hotkeys),
-            )
-            rows = cursor.fetchall()
-            result = [(r[0], r[1]) for r in rows]
-            hotkeys_from_db = [r[0] for r in result]
-            hashes_from_db = [r[1] for r in result]
-            bt.logging.debug(
-                f"get_hotkeys_and_hashes: challenge_uid={challenge_uid}, "
-                f"requested={len(hotkeys)}, found={len(hotkeys_from_db)}"
-            )
-            return hotkeys_from_db, hashes_from_db
-        except Exception as e:
-            bt.logging.exception(f"get_hotkeys_and_hashes: failed — {e}")
-            return [], []
-        finally:
-            conn.close()
-
     def _insert_challenge(self, sample: Era5Sample) -> int:
         """
         Insert a sample into the database and return the challenge UID.
@@ -274,7 +278,7 @@ class OptimizedWeatherStorage:
         If a challenge_uid is already in the responses table,
         append the row with the new hotkeys
 
-        Returns boolean wheather the insertion was successful
+        Returns boolean whether the insertion was successful
         """
         conn = sqlite3.connect(self.db_path)
         try:
@@ -313,10 +317,11 @@ class OptimizedWeatherStorage:
         If a challenge_uid is already in the responses table,
         append the row with the new hotkeys
 
-        Returns boolean wheather the insertion was successful
+        Returns boolean whether the insertion was successful
         """
         conn = sqlite3.connect(self.db_path)
         try:
+            bt.logging.debug(f"[_insert_hotkeys] For challenge {challenge_uid} inserting infor for {miner_uids}")
             cursor = conn.cursor()
             cursor.executemany(
                 """
@@ -387,7 +392,7 @@ class OptimizedWeatherStorage:
         """
         Return all the hotkeys for a given challenge for good/bad miners
         """
-        bt.logging.debug(f"_get__get_hotkeys_and_uids_for_challengehotkeys: challenge_uid={challenge_uid}, good_miners={good_miners}")
+        bt.logging.debug(f"_get_hotkeys_and_uids_for_challenge: challenge_uid={challenge_uid}, good_miners={good_miners}")
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
@@ -501,7 +506,7 @@ class OptimizedWeatherStorage:
             miner_uids += current_challenge_bad_miner_uids
             hashes += [None]*len(current_challenge_bad_miner_hotkeys)
             
-            # the boolean with wheather the miner is good or not (Not really needed because if the hash is empty then the miner is bad, but in case you still want it):
+            # the boolean with whether the miner is good or not (Not really needed because if the hash is empty then the miner is bad, but in case you still want it):
             is_good = [1]*len(miner_hotkeys) + [0]*len(current_challenge_bad_miner_hotkeys)
                 
             await score_func(sample, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good)
@@ -544,7 +549,7 @@ class OptimizedWeatherStorage:
         try:
             cursor = conn.cursor()
 
-            # TODO what if we pruned all the hotkeys for a given challenge, check that edge case
+            
             cursor.execute(
                 """
                 DELETE FROM challenge_hotkey_map WHERE miner_hotkey IN ({});

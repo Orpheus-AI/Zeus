@@ -19,6 +19,7 @@ import copy
 import typing
 
 import bittensor as bt
+import pandas as pd
 
 from abc import ABC, abstractmethod
 
@@ -100,6 +101,8 @@ class BaseNeuron(ABC):
         )
         self.step = 0
 
+        self.last_time_weights_updated = pd.Timestamp.now("UTC")
+
     @abstractmethod
     def run(self): ...
 
@@ -150,18 +153,23 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length
 
     def should_set_weights(self) -> bool:
+        # Don't set weights if you are a miner
+        if self.neuron_type == "MinerNeuron":
+            return False
+        
         # Don't set weights on initialization.
         if self.step == 0:
             return False
 
-        # Check if enough epoch blocks have elapsed since the last epoch.
-        if self.config.neuron.disable_set_weights:
-            return False
+        # if self.config.neuron.disable_set_weights: # this is set to True in the defalut settings
+        #     return False
 
         # Define appropriate logic for when set weights.
         return (
-            self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
+            len(self.state_per_variable.values()) == 0
+            and 
+            ((pd.Timestamp.now("UTC") - self.last_time_weights_updated) > pd.Timedelta(hours = 10))
+        )
 
     def save_state(self):
         bt.logging.trace(

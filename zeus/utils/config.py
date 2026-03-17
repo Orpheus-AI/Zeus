@@ -154,7 +154,7 @@ def add_validator_args(cls, parser):
         "--neuron.prediction_timeout",
         type=float,
         help="The timeout for each forward call in prediction phase in seconds.",
-        default=30,
+        default=26,
     )
 
     parser.add_argument(
@@ -213,7 +213,7 @@ def add_validator_args(cls, parser):
         "--neuron.burn_percent",
         type=float,
         help="The percentage of the reward to burn.",
-        default=0.9,
+        default=0.95,
     )
 
     parser.add_argument(

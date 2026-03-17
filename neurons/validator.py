@@ -32,6 +32,7 @@ from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.utils.schedule_time import Scheduler
 from zeus.validator.constants import (
     TESTNET_UID,
+    BEST_FORECASTS_DIRECTORY
 )
 from zeus.validator.forward import forward
 from zeus.validator.storage import OptimizedWeatherStorage
@@ -58,7 +59,7 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Finished setting up data loaders.")
 
         self.database = OptimizedWeatherStorage(self.cds_loader)
-        self.best_predictions_path = '/root/best_prediction/'
+        self.best_predictions_path = BEST_FORECASTS_DIRECTORY
 
     async def forward(self):
         """
@@ -75,13 +76,11 @@ class Validator(BaseValidatorNeuron):
         if self.is_running: # make sure init is finalised
             self.database.prune_hotkeys(hotkeys)
 
-    
     def get_responding_miners_hotkeys(self) -> Set[str]:
         return self.database.get_responding_miners_hotkeys()
     
     def __exit__(self, exc_type, exc_value, traceback):
         super().__exit__(exc_type, exc_value, traceback)
-        self.validator_proxy.stop_server()
 
     def on_error(self, error: Exception, error_message: str):
         super().on_error(error, error_message)

@@ -36,8 +36,9 @@ class ERA5GoogleLoader(Era5BaseLoader):
         self.gcloud_url = gcloud_url
         self.date_range = list(map(pd.to_datetime, sorted(date_range)))
         self.input_hours = input_hours
+        self._predict_range = HISTORIC_HOURS_PREDICT_RANGE
 
-        super().__init__(predict_sample_range=HISTORIC_HOURS_PREDICT_RANGE, **kwargs)
+        super().__init__(max_time_offset=HISTORIC_HOURS_PREDICT_RANGE[1], step_size=1, **kwargs)
 
     def load_dataset(self) -> xr.Dataset:
         dataset = xr.open_zarr(
@@ -46,37 +47,15 @@ class ERA5GoogleLoader(Era5BaseLoader):
         dataset = dataset[list(self.data_vars)]  # slice out anything we won't use.
         return dataset
 
-    def sample_time_range(self) -> Tuple[pd.Timestamp, pd.Timestamp, int]:
-        """
-        Sample a random time range from the dataset in the form of pandas datetimes and a number of hours to predict.
-        The start will always be the start of day,
-        but the end could be any hour on a day after start.
-
-        Returns:
-         - start_timestamp (pd.Timestamp): The start of the time range to be predicted.
-         - end_timestamp (pd.Timestamp): The end of the time range to be predicted.
-         - num_predict_hours (int): The number of hours to be predicted (difference between start and end, including both limits).
-        """
-        latest_day = (self.date_range[1] - self.date_range[0]).days - math.ceil(
-            self.predict_sample_range[1] / 24
-        )
-        start_timestamp = self.date_range[0] + pd.Timedelta(
-            days=np.random.randint(0, latest_day)
-        )
-        num_predict_hours = np.random.randint(*self.predict_sample_range)
-        end_timestamp = start_timestamp + pd.Timedelta(hours=num_predict_hours - 1)
-        return start_timestamp, end_timestamp, num_predict_hours
-
     def get_sample(self) -> Era5Sample:
-        """
-        Get a random sample from the dataset.
-
-        Returns:
-        - sample (Era5Sample): The sample containing the input and output data.
-        """
-        # get a random rectangular bounding box
+        """Random bbox and time range from historic dataset."""
         lat_start, lat_end, lon_start, lon_end = self.sample_bbox()
-        start_time, end_time, predict_hours = self.sample_time_range()
+        latest_day = (self.date_range[1] - self.date_range[0]).days - math.ceil(
+            self._predict_range[1] / 24
+        )
+        start_time = self.date_range[0] + pd.Timedelta(days=np.random.randint(0, latest_day))
+        predict_hours = np.random.randint(*self._predict_range)
+        end_time = start_time + pd.Timedelta(hours=predict_hours - 1)
 
         data4d = self.get_data(
             lat_start=lat_start,
@@ -100,8 +79,8 @@ class ERA5GoogleLoader(Era5BaseLoader):
             lon_end=lon_end,
             start_timestamp=start_time.timestamp(),
             end_timestamp=end_time.timestamp(),
-            input_data=input_data,
             output_data=output_data,
+            step_size=1,
         )
 
 

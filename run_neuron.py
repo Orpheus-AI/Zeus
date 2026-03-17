@@ -39,11 +39,7 @@ def run_auto_update_self_heal(neuron_type, auto_update, self_heal):
                 if error:
                     print("Error in updating:", error)
                 else:
-                    print(
-                        "Updated local repo to latest version: {}",
-                        format(remote_commit),
-                    )
-
+                    print("Updated local repo to latest version: {}".format(remote_commit))
                     print("Running the autoupdate steps...")
                     # Trigger shell script. Make sure this file path starts from root
                     os.system(f"./setup.sh")

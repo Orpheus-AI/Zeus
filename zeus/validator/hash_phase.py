@@ -2,23 +2,19 @@ import time
 from typing import List
 
 import bittensor as bt
-
+from copy import deepcopy
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.data.sample import Era5Sample
 from zeus.protocol import HashedTimePredictionSynapse
 from zeus.utils.coordinates import bbox_to_str
 from zeus.utils.time import timestamp_to_str
 from zeus.utils.uids import get_available_uids
-from zeus.validator.constants import (
-    ATTEMPTS_PER_MINER,
-    FORWARD_RESPONSE_BATCH_K,
-    MAINNET_UID,
-)
+from zeus.validator.constants import HASH_DENDRITE_SETTINGS, MAINNET_UID
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (
     _build_bad_miners_data,
 )
-
+import math
 
 async def run_all_hash_phases(self, challenges):
     """Run hash phase for all challenges, collecting miner hash commitments.
@@ -36,7 +32,6 @@ async def run_all_hash_phases(self, challenges):
         MAINNET_UID,
         exclude=set(),
     )
-    good_miners_per_challenge = {}
 
     for i, sample in enumerate(challenges):
         bt.logging.info(f"[run_all_hash_phases] Start of the commit phase for challenge {i}/{len(challenges)}")
@@ -44,29 +39,25 @@ async def run_all_hash_phases(self, challenges):
         bt.logging.info(f"[run_all_hash_phases] Data sampled starts from {timestamp_to_str(sample.start_timestamp)} | Predict {sample.predict_hours} steps (step={sample.step_size}h).")
         
         str_sample = str(sample)
-        good_miners_uids, bad_miners_uids = await _run_single_hash_phase(self, all_uids_to_query, sample)
+        
 
         good_miners_data, bad_miners_uids = await _run_single_hash_phase(self, all_uids_to_query, sample)
+        bt.logging.warning(f"hash phase:[{str_sample}] {len(bad_miners_uids)} miners do not have a valid hash or did not respond: {bad_miners_uids}")
         if len(bad_miners_uids) > 0:
             good_miners_uids = [miner.uid for miner in good_miners_data]
-            bt.logging.warning(f"{len(bad_miners_uids)} miners do not have a valid hash or did not respond: {bad_miners_uids}")
+            
             bt.logging.warning(f'good miners uids: {good_miners_uids}')
             bad_miners_data = _build_bad_miners_data(self, bad_miners_uids)
-            # check if overlap between good and bad miners hotkeys
-            good_miners_hotkeys = [self.metagraph.axons[uid].hotkey for uid in good_miners_uids]
-            bad_miners_hotkeys = [miner.hotkey for miner in bad_miners_data]
-            overlap = set(good_miners_hotkeys) & set(bad_miners_hotkeys)
-            uids_overlap = set(good_miners_uids) & set(bad_miners_uids)
-            bt.logging.warning(f'overlap between good and bad miners hotkeys: {overlap} {uids_overlap}')
+
+
+
             successful_insertion = self.database.insert(sample, bad_miners_data, good_miners=False)
-            bt.logging.warning(f"successful_insertion? {successful_insertion}")
+            bt.logging.warning(f"successful_insertion of bad miners? {successful_insertion}")
             if successful_insertion:
                 #self.uid_tracker.mark_finished(bad_miners_uids, good=False)
                 bt.logging.success(f"Storing bad miner responses in SQLite database: {bad_miners_uids}")
         
-        good_miners_per_challenge[str_sample] = good_miners_data
-    bt.logging.warning(f'good_miners_per_challenge: {good_miners_per_challenge}')
-    return good_miners_per_challenge
+      
     
 
 
@@ -86,22 +77,20 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
     bt.logging.debug(f'[_run_single_hash_phase] Number of all miners uids {len(all_uids_to_query)}')
 
     # in the last few trials, if there are any miners that were not
-    ignore_busy_after_step = len(all_uids_to_query) // FORWARD_RESPONSE_BATCH_K
+    steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / HASH_DENDRITE_SETTINGS.response_batch_k)
     good_miners_data: List[MinerData] = []
     good_miners_uids: set[int] = set()
     bad_miners_uids: set[int] = set()
     
-    forward_max_uid_attempts = (len(all_uids_to_query) // FORWARD_RESPONSE_BATCH_K) * ATTEMPTS_PER_MINER
+    forward_max_uid_attempts = steps_to_see_everyone_once * HASH_DENDRITE_SETTINGS.attempts_per_miner
     self.uid_tracker.init_count_map()
     for attempt in range(forward_max_uid_attempts):
         # Exclude only good_miners so we never re-query them; bad miners can be sampled again
         miner_uids = self.uid_tracker.get_next_batch(
-            k=FORWARD_RESPONSE_BATCH_K,
+            k=HASH_DENDRITE_SETTINGS.response_batch_k,
             good_miners_uids=good_miners_uids,
-            trial_num=attempt,
-            ignore_busy_after_step=ignore_busy_after_step,
-            allowed_uids= None
-
+            allowed_uids= None,
+            allowed_attempts=HASH_DENDRITE_SETTINGS.attempts_per_miner
         )
         if not miner_uids:
             continue
@@ -110,19 +99,22 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
 
         axons_to_query = [self.metagraph.axons[uid] for uid in miner_uids]
 
-        responses = await self.dendrite(
+        start_time = time.time()
+        responses = await self.dendrite_hash(
             axons=axons_to_query,
             synapse=sample.build_synapse(HashedTimePredictionSynapse),
             deserialize=False,
             timeout=self.config.neuron.hash_timeout,
         )
-     
+        end_time = time.time()
+        bt.logging.warning(f"Time taken to query hashes: {end_time - start_time} seconds")
+       
         batch_good_miners_data = _parse_hashes(miner_uids, axons_to_query, responses)
         batch_successful_uids = [miner_data.uid for miner_data in batch_good_miners_data]
         good_miners_data.extend(batch_good_miners_data)
        
-        if len(good_miners_data) > 0:
-            successful_insertion = self.database.insert(sample, good_miners_data, good_miners=True)
+        if len(batch_good_miners_data) > 0:
+            successful_insertion = self.database.insert(sample, batch_good_miners_data, good_miners=True)
             bt.logging.debug(f"[_run_single_hash_phase] successful_insertion? {successful_insertion}")
             if successful_insertion:
                 bt.logging.success(f"Storing challenge and sensible miner responses in SQLite database: {batch_successful_uids}")
@@ -131,12 +123,15 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
 
         good_miners_uids.update(batch_successful_uids)
 
-        if len(good_miners_uids) >= len(all_uids_to_query):
-            bt.logging.info(f"All {len(all_uids_to_query)} available miners are good; stopping batch loop.")
-            break
+        
 
         bad_miners_uids = set(all_uids_to_query) - good_miners_uids
         # Introduce a delay to prevent spamming requests
+
+        if len(good_miners_uids) >= len(all_uids_to_query):
+            bt.logging.info(f"All {len(all_uids_to_query)} available miners are good; stopping batch loop.")
+            break
+        
         time.sleep(10) #max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
         
 

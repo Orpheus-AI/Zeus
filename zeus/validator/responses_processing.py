@@ -52,17 +52,18 @@ def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> Lis
         List of compressed prediction bytes (or None for missing predictions)
     """
     compressed_predictions = []
-
+    count_normal = 0
     for r in responses:
         if getattr(r, "predictions", None) is not None:
             # Decode to bytes
             compressed_predictions.append(decode_base64_to_compressed(r.predictions))
             # FREE THE MEMORY: Delete the base64 string from the synapse
             r.predictions = None 
+            count_normal += 1
         else:
             compressed_predictions.append(None)
 
-    bt.logging.debug(f"[create_compressed_predictions]: length of compressed_predictions: {len(compressed_predictions)}")
+    bt.logging.debug(f"[create_compressed_predictions]: count of normal responses: {count_normal}")
     return compressed_predictions
 
 def _build_bad_miners_data(

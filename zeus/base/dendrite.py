@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Union, Any, AsyncGenerator, Dict, Tuple, List, Awaitable, TypeVar
 T = TypeVar("T")
 import time
@@ -5,7 +6,14 @@ import asyncio
 import json
 import aiohttp
 import bittensor as bt
-from zeus.validator.constants import MAX_MINER_RESPONSE_BODY_BYTES
+
+@dataclass(frozen=True)
+class DendriteSettings:
+    """Settings per dendrite/synapse type (hash vs prediction)."""
+    forward_concurrency: int
+    response_batch_k: int
+    attempts_per_miner: int
+    max_response_body_bytes: int
 
 
 class ZeusDendrite(bt.Dendrite):
@@ -19,17 +27,22 @@ class ZeusDendrite(bt.Dendrite):
     as opposed to a multi-second (3+) delay between the first and last miner.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        settings: DendriteSettings,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
-        # just do this once initially
+        self._settings = settings
         connector = aiohttp.TCPConnector(
-            limit=260, 
-            verify_ssl=False, 
+            limit=260,
+            verify_ssl=False,
             loop=asyncio.get_event_loop(),
             limit_per_host=125,
-            )
+        )
         self._session = aiohttp.ClientSession(connector=connector)
-        self.semaphore = asyncio.Semaphore(10)
+        self.semaphore = asyncio.Semaphore(settings.forward_concurrency)
 
     async def forward(
         self,
@@ -80,11 +93,11 @@ class ZeusDendrite(bt.Dendrite):
                 *[
                     self.call(
                         post_args=post_args, 
-                        synapse=synapse, 
+                        synapse=prepared_synapse, 
                         target_axon=target_axon, # Pass the axon info down
                         deserialize=deserialize
                     ) 
-                    for (synapse, post_args, target_axon) in calls
+                    for (prepared_synapse, post_args, target_axon) in calls
                 ]
             )
 
@@ -98,13 +111,13 @@ class ZeusDendrite(bt.Dendrite):
         target_axon: Union[bt.AxonInfo, bt.Axon],
         timeout: float = 12.0,
         synapse: bt.Synapse = bt.Synapse(),
-    ) -> Tuple[bt.Synapse, Dict[str, Any]]:
+    ) -> Tuple[bt.Synapse, Dict[str, Any], Union[bt.AxonInfo,bt.Axon]]:
         """
         First half of default BitTensor dendrite.call function.
         Modifies the synapse in place, and returns all precomputed arguments for post request
 
         Returns:
-        - Synapyse: modified in place to include hotkey signing
+        - Synapse: modified in place to include hotkey signing
         - Post request arguments: A dict representing all precomputed HTTP post arguments
         """
         target_axon = (
@@ -138,6 +151,7 @@ class ZeusDendrite(bt.Dendrite):
         Returns:
         - Synapse or deserialisation result
         """
+        max_body_bytes = self._settings.max_response_body_bytes
         async with self.semaphore:
             timeout_float = post_args.pop("timeout_float")
             synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout_float)
@@ -159,9 +173,9 @@ class ZeusDendrite(bt.Dendrite):
                     bytes_read = 0
                     
                     # We iterate over the stream manually to ensure we never over-allocate
-                    async for chunk in response.content.iter_chunked(1024 * 1024): # chunks
+                    async for chunk in response.content.iter_chunked(64 * 1024): # chunks
                         bytes_read += len(chunk)
-                        if bytes_read > MAX_MINER_RESPONSE_BODY_BYTES:
+                        if bytes_read > max_body_bytes:
                             # Close the connection immediately to stop the flow
                             response.close() 
                             raise ValueError("Miner sent too much data (Byte Limit Exceeded)")

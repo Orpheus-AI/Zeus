@@ -26,7 +26,7 @@ import time
 from zeus.utils.misc import split_list
 from zeus.data.sample import Era5Sample
 from zeus.utils.compression import decompress_prediction
-from zeus.validator.constants import PERCENTAGE_GOING_TO_WINNER
+from zeus.validator.constants import PERCENTAGE_GOING_TO_WINNER, LATITUDE_WEIGHTS_PATH
 from zeus.validator.miner_data import MinerData
 from zeus.validator.metrics import custom_rmse, custom_mae
 
@@ -64,8 +64,8 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
     for i, val in enumerate(values):
         # Comparison with rounding to handle float noise
         if val == float('inf') or val is None:
-            current_rank = len(values)
-            ranks.append(current_rank)
+            inf_rank = len(values)
+            ranks.append(inf_rank)
             continue
         if i > 0 and round(val, precision) != round(values[i-1], precision):
             current_rank = current_rank + 1
@@ -78,7 +78,7 @@ def set_errors(sample: Era5Sample, miner_uids: List[int], axons_to_query: List, 
 
     output_data = sample.output_data
     output_data = output_data.to(torch.float16)
-    latitude_weights = np.load("zeus/data/weights/latitude_weights_for_rmse.npy")
+    latitude_weights = np.load(LATITUDE_WEIGHTS_PATH)
     latitude_weights = torch.from_numpy(latitude_weights).to(output_data.device).to(output_data.dtype)
     
     miners_data = []
@@ -146,12 +146,16 @@ def set_rewards(
     # 1. Calculate the score
     miners_data = calculate_scores(miners_data)
     
+    # Sort the miners based on the score, which is an average of the rmse and mae
     sorted_miners = sorted(miners_data, key=_sort_key)
     
     # 2. Extract values for the pure logic function
     rmses = [m.rmse for m in sorted_miners]
     
     # 3. Get ranks and assign them
+    # The miners are already sorted based on their score, the ranks are calculated based on that sort, 
+    # we pass the rmse here because if two miners have (almost) the same rmse we give them the same rank
+    # otherwise if two miners have rmse of X one would be unfairly given rank lower than the other one
     ranks = calculate_competition_ranks(rmses)
     
     for miner, rank in zip(sorted_miners, ranks):
@@ -169,7 +173,7 @@ def compute_min_rank_weights(
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Computes weights by 
-    1) calculating a rank for each hotkey by taking the avergae of their last window_size ranks from rank_history
+    1) calculating a rank for each hotkey by taking the average of their last window_size ranks from rank_history
      - if a hotkey doesn't have a rank history we give it a rank infinity.
     2) giving PERCENTAGE_GOING_TO_WINNER of the weight to the first one and logarithmically to the rest. 
     3) break ties based on the latest ranks. 
@@ -215,7 +219,7 @@ def compute_min_rank_weights(
     # Best miner gets PERCENTAGE_GOING_TO_WINNER
     best_uid = miners_metadata[0]['uid']
     bt.logging.debug(f"The best miner has uid : {best_uid}") 
-    bt.logging.debug(f"full information for this miner : {miners_metadata[0]}")
+    bt.logging.debug(f"Full information for this miner : {miners_metadata[0]}")
     weights[best_uid] = PERCENTAGE_GOING_TO_WINNER
     
     # Remaining weight distributed logarithmically among the rest
@@ -270,10 +274,11 @@ def complete_challenge(
     )
     
     bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
+    
     for miner in miners_data:
         #if miner.prediction is None: continue
         bt.logging.warning(
-            f"UID: {miner.uid} |  Reward: {miner.score} rmse: {miner.rmse} | mae: {miner.mae} | score {miner.score} | Penalty: {miner.shape_penalty} "
+            f"UID: {miner.uid} |  rmse: {miner.rmse} | mae: {miner.mae} | score (rank) {miner.score} | Penalty: {miner.shape_penalty} "
         )
 
 def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape):
@@ -293,9 +298,7 @@ def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predict
     good_uids = set()
     if len(good_miners_list) > 0:
         good_uids = set([m.uid for m in good_miners_list])
-        bt.logging.success(
-            f"Storing challenge and sensible miner responses in SQLite database: {good_uids}"
-        )
+        bt.logging.success(f"[calculate_rmses] Good Miners : {good_uids} got their scores calculated")
 
     bt.logging.success(f"Miners data length: {len(miners_data)}")
  

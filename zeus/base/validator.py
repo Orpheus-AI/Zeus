@@ -25,10 +25,11 @@ import sys
 import threading
 from abc import abstractmethod
 from traceback import format_exception
-from typing import Dict, List, Union, Set
+from typing import Dict, List, Set, Union
 
 import bittensor as bt
 import numpy as np
+import pandas as pd
 
 from zeus.base.dendrite import ZeusDendrite
 from zeus.base.neuron import BaseNeuron
@@ -37,9 +38,14 @@ from zeus.base.utils.weight_utils import (
     process_weights_for_netuid,
 )
 from zeus.utils.config import add_validator_args
-from zeus.utils.results_state import save_state, load_state, ResultsState
+from zeus.utils.results_state import ResultsState, load_state, save_state
 from zeus.utils.uids import check_uid_availability
-from zeus.validator.constants import ERA5_DATA_VARS, RANK_HISTORY_PRUNE_LEN
+from zeus.validator.constants import (
+    ERA5_DATA_VARS,
+    HASH_DENDRITE_SETTINGS,
+    PREDICTION_DENDRITE_SETTINGS,
+    RANK_HISTORY_PRUNE_LEN,
+)
 from zeus.validator.reward import compute_min_rank_weights
 
 
@@ -72,9 +78,16 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
         self.challenges = []
 
-        # Dendrite lets us send messages to other nodes (axons) in the network.
-        self.dendrite = ZeusDendrite(wallet=self.wallet)
-        bt.logging.info(f"Dendrite: {self.dendrite}")
+        # Two dendrites: one for hash (commit) phase, one for prediction (reveal) phase.
+        self.dendrite_hash = ZeusDendrite(
+            wallet=self.wallet,
+            settings=HASH_DENDRITE_SETTINGS,
+        )
+        self.dendrite_prediction = ZeusDendrite(
+            wallet=self.wallet,
+            settings=PREDICTION_DENDRITE_SETTINGS,
+        )
+        bt.logging.info("Dendrites: hash=%s prediction=%s", self.dendrite_hash, self.dendrite_prediction)
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
@@ -261,49 +274,55 @@ class BaseValidatorNeuron(BaseNeuron):
         variable_weights_list = []
         variable_scaler = []
 
-        # Calculate weights for every variable we track
-        for var_name, state in self.state_per_variable.items():
-            bt.logging.info(f"Calculating weights for variable {var_name}")
-            variable_scaler.append(ERA5_DATA_VARS[var_name])
-            if state.rank_history:
-                max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
-                window_size = min(self.config.neuron.score_time_window, max_len)            
-        
-                weights, best_10 = compute_min_rank_weights(
-                    metagraph_size=self.metagraph.n,
-                    hotkeys=self.metagraph.hotkeys,
-                    rank_history=state.rank_history,
-                    uids=self.metagraph.uids,
-                    window_size=window_size,
-                    miners_hotkeys=miners_hotkeys,
-                )
-                variable_weights_list.append(weights)
-                state.best_10_miners = best_10
-
-            else: # no rank history yet, reward responding miners
-                bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
-                weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below
-                    metagraph_size=self.metagraph.n, 
-                    uids=self.metagraph.uids, 
-                    hotkeys=self.metagraph.hotkeys
+        if len(self.state_per_variable.values()) > 0:
+            # Calculate weights for every variable we track
+            for var_name, state in self.state_per_variable.items():
+                bt.logging.info(f"Calculating weights for variable {var_name}")
+                variable_scaler.append(ERA5_DATA_VARS[var_name])
+                if state.rank_history:
+                    max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
+                    window_size = min(self.config.neuron.score_time_window, max_len)            
+            
+                    weights, best_10 = compute_min_rank_weights(
+                        metagraph_size=self.metagraph.n,
+                        hotkeys=self.metagraph.hotkeys,
+                        rank_history=state.rank_history,
+                        uids=self.metagraph.uids,
+                        window_size=window_size,
+                        miners_hotkeys=miners_hotkeys,
                     )
-                variable_weights_list.append(weights)
-                state.best_10_miners = [] # there are no best miners in the first 7 days
+                    variable_weights_list.append(weights)
+                    state.best_10_miners = best_10
+                
+                else: # no rank history yet, reward responing miners
+                    bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
+                    weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below
+                        metagraph_size=self.metagraph.n, 
+                        uids=self.metagraph.uids, 
+                        hotkeys=self.metagraph.hotkeys
+                        )
+                    variable_weights_list.append(weights)
+                    state.best_10_miners = [] # there are no best miners in the first 7 days
 
-        # Updating who is the best_miner per challenge
-        save_state(
-            self.state_path,
-            self.state_per_variable, 
-            step=self.step,
-        )
-        if len(variable_weights_list) == 0:
-            bt.logging.warning("[set_weights] No variables found for which to set weights")
-            return
+            # Updating who is the best_miner per challenge
+            save_state(
+                self.state_path,
+                self.state_per_variable, 
+                step=self.step,
+            )
 
-        # Combine all variables into one weight matrix with the corresponding weights
-        raw_weights = np.average(variable_weights_list, axis=0, weights=variable_scaler)          
+            # Combine all variables into one weight matrix with the corresponding weights
+            raw_weights = np.average(variable_weights_list, axis=0, weights=variable_scaler)
 
-        if np.isnan(raw_weights).any(): # TODO This should not be possible, maybe we can delete it later
+        else: # no rank history for any variable
+            bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
+            raw_weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below
+                metagraph_size=self.metagraph.n, 
+                uids=self.metagraph.uids, 
+                hotkeys=self.metagraph.hotkeys
+                )                 
+
+        if np.isnan(raw_weights).any(): # This should not be possible, maybe we can delete it later
             bt.logging.warning("[set_weights] Computed weights contain NaN; zeroing. This should not happen, something is potentially going wrong")
             raw_weights = np.nan_to_num(raw_weights, nan=0.0)
 
@@ -362,8 +381,7 @@ class BaseValidatorNeuron(BaseNeuron):
         ) = convert_weights_and_uids_for_emit(
             uids=processed_weight_uids, weights=processed_weights
         )
-        bt.logging.debug("uint_weights", uint_weights)
-        bt.logging.debug("uint_uids", uint_uids)
+
 
         # Set the weights on chain via our subtensor connection.
         result, msg = self.subtensor.set_weights(
@@ -377,6 +395,7 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         if result:
             bt.logging.info("set_weights on chain successfully!")
+            self.last_time_weights_updated = pd.Timestamp.now("UTC")
         else:
             bt.logging.error("set_weights failed", msg)
 
@@ -390,14 +409,34 @@ class BaseValidatorNeuron(BaseNeuron):
     def reward_responders(self, metagraph_size:int, uids: List[int], hotkeys: List[str]):
         weights = np.zeros(metagraph_size)
         responding_miners_hotkeys = self.get_responding_miners_hotkeys()
-        miners_hotkeys, _ = self.find_miners()
 
-        # read all the hotkeys from 
         for uid, hotkey in zip(uids, hotkeys):
-            if hotkey in responding_miners_hotkeys and hotkey in miners_hotkeys:
+            if hotkey in responding_miners_hotkeys and self.is_registered_after_release_zeus_v2(uid):
                 weights[uid] = 1
         
-        return weights   
+        return weights 
+
+    def is_registered_after_release_zeus_v2(self, uid : int):
+        """
+        This functions gets a uid and hotkey and checks is the neuron was registered before the release of the new subnet version
+        """  
+        reg_block = self.metagraph.block_at_registration[uid]
+        current_block = self.subtensor.block
+
+        # Calculate estimated time elapsed (assuming ~12 seconds per block)
+        blocks_elapsed = current_block - reg_block
+        seconds_elapsed = blocks_elapsed * 12
+        
+        # Estimate the exact datetime of registration relative to now
+        estimated_reg_date = pd.Timestamp.now("UTC") - pd.Timedelta(seconds=seconds_elapsed)
+        
+        # Define our cutoff date: March 17, 2026 at 15:00
+        cutoff_date = pd.Timestamp('2026-03-17 18:00:00', tz='UTC')
+
+        bt.logging.debug(f"[is_registered_after_zeus_v2] UID {uid} estimated registration: {estimated_reg_date.strftime('%d.%m.%Y %H:%M:%S')}")
+
+        # Return True if registered on/after cutoff, False if before
+        return estimated_reg_date >= cutoff_date
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
