@@ -24,7 +24,7 @@ PREDICTION_DENDRITE_SETTINGS = DendriteSettings(
     forward_concurrency=13,
     response_batch_k=39,
     attempts_per_miner=2,
-    max_response_body_bytes=1024 * 1024 * 95,
+    max_response_body_bytes=1024 * 1024 * 110,
 )
 
 # after how many percent of above it yields results
