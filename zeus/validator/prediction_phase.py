@@ -161,7 +161,10 @@ def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_ha
             if len_good < top_k: top_k = len_good # if there are less good hashing miners than the top k, query all good hashing miners
             indices = random.sample(range(len_good), top_k)
         else:
-            indices = range(len_good)
+            if len_good > 10:
+                indices = random.sample(range(len_good), 10)
+            else:
+                indices = range(len_good)
 
         hotkeys_to_query = [good_hashing_hotkeys[i] for i in indices]
         hashes_of_queried = [good_hashes[i] for i in indices]
@@ -254,8 +257,10 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
         expected_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
         good_miners_data, bad_miners_data = await run_prediction_phase(self, sample, uids_to_query, hashes_of_queried, expected_shape, calculate_metrics = False)
-        if len(good_miners_data) > 0:
-            save_best_miner_prediction(self, sample, good_miners_data[0], query_random_miners)
+        # if len(good_miners_data) > 0:
+            
+        #     for i in range(len(good_miners_data)):
+        #         save_best_miner_prediction(self, sample, good_miners_data[i], query_random_miners)
 
         bad_hotkeys = [miner.hotkey for miner in bad_miners_data]
         if len(bad_hotkeys) > 0:
