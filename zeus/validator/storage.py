@@ -41,7 +41,8 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     os.makedirs(variable_folder, exist_ok=True)
     
     # Convert torch tensor to numpy array and save
-    prediction_numpy = prediction.detach().cpu().numpy()
+    prediction_numpy = prediction.detach().cpu().to(torch.float32).numpy()
+
     time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
 
     xr_dataarray = xr.DataArray(
@@ -53,7 +54,7 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
             longitude = np.arange(sample.lon_start, sample.lon_end+0.25, 0.25)
         ))
     randomness_tag = "random" if is_random else "best" 
-    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_{randomness_tag}_miner.nc"
+    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_{randomness_tag}_miner_{miner.hotkey}.nc"
     filepath = os.path.join(variable_folder, filename)
     # Convert DataArray to Dataset with the variable name set to the sample.variable
     xr_dataset = xr.Dataset({sample.variable: xr_dataarray})

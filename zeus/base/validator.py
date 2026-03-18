@@ -395,7 +395,6 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         if result:
             bt.logging.info("set_weights on chain successfully!")
-            self.last_time_weights_updated = pd.Timestamp.now("UTC")
         else:
             bt.logging.error("set_weights failed", msg)
 
