@@ -283,7 +283,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
                     window_size = min(self.config.neuron.score_time_window, max_len)            
             
-                    weights, best_10 = compute_min_rank_weights(
+                    weights, miners_metadata = compute_min_rank_weights(
                         metagraph_size=self.metagraph.n,
                         hotkeys=self.metagraph.hotkeys,
                         rank_history=state.rank_history,
@@ -291,9 +291,12 @@ class BaseValidatorNeuron(BaseNeuron):
                         window_size=window_size,
                         miners_hotkeys=miners_hotkeys,
                     )
+                    best_10_miners_hotkeys = [m["hotkey"] for m in miners_metadata[:10]]
                     variable_weights_list.append(weights)
-                    state.best_10_miners = best_10
-                
+                    state.best_10_miners = best_10_miners_hotkeys
+                    
+                    self.performance_database_api.log_rank_aggregates(miners_metadata, var_name)
+
                 else: # no rank history yet, reward responing miners
                     bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
                     weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below

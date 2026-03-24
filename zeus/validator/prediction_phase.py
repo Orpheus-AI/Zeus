@@ -87,7 +87,7 @@ async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_l
     return compressed_predictions
 
 
-async def run_final_prediction_phase(self, sample, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good):
+async def run_final_prediction_phase(self, sample, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good_list):
     """Run final prediction phase for scoring, verifying hashes and calculating metrics.
     
     Args:
@@ -101,7 +101,15 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
     Returns:
         List of all MinerData objects (good, bad, and non-committed miners)
     """
-    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, sample.query_timestamp, is_good)
+    # we want to score only those miners that were registered after the release of v2
+    is_registered_after_v2 = [self.is_registered_after_release_zeus_v2(m_uid) for m_uid in miner_uids]
+    if not any(is_registered_after_v2):
+        bt.logging.warning(f"[run_final_prediction_phase] No miners registered after v2 found for sample {sample.variable}. Skipping.")
+        return
+    hashes_updated = [c_hash if reg else None for c_hash, reg in zip(hashes, is_registered_after_v2)]
+    is_good_list_updated = [goodness if reg else 0 for goodness, reg in zip(is_good_list, is_registered_after_v2)]
+
+    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes_updated, sample.query_timestamp, is_good_list_updated)
     all_uids_to_query = [uid for uid, is_good in zip(miners_uids, miners_is_good) if is_good]
     hashes_from_uids_to_query = [hash for hash, is_good in zip(miners_hashes, miners_is_good) if is_good]
 
@@ -109,7 +117,7 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
 
     bad_miners_data = []
     if len(bad_uids) > 0:
-        bt.logging.debug(f"{len(bad_uids)} miners did not commit: {bad_uids}")
+        bt.logging.debug(f"{len(bad_uids)} miners did not commit or registered prior v2: {bad_uids}")
         bad_miners_data = _build_bad_miners_data(self, bad_uids)
 
     expected_shape = sample.output_data.shape
@@ -232,7 +240,7 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
 
     for sample in challenges:
-        target_variables = sample.variable
+        target_variable = sample.variable
         sample_str = str(sample)
 
         good_hashes, good_hotkeys = self.database.get_hashing_data_for_sample(sample)
@@ -243,17 +251,12 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
         filtered_good_hashes, filtered_good_hotkeys = filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query)
         
-        
-
-
-        if target_variables in self.state_per_variable:
-            best_10_hotkeys = self.state_per_variable[target_variables].best_10_miners  
+        if target_variable in self.state_per_variable:
+            best_10_hotkeys = self.state_per_variable[target_variable].best_10_miners  
         else:
             best_10_hotkeys = []
-
         
         hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_10_hotkeys, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
-
 
         expected_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
         good_miners_data, bad_miners_data = await run_prediction_phase(self, sample, uids_to_query, hashes_of_queried, expected_shape, calculate_metrics = False)
@@ -268,6 +271,9 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
             if successful_insertion:
                 bad_uids = [miner.uid for miner in bad_miners_data]
                 bt.logging.success(f"[run_initial_prediction_top_k_phases] Storing bad miners in SQLite database: {bad_uids}")
+
+        self.performance_database_api.insert_top_k_info(sample, hotkeys_to_query, uids_to_query, bad_hotkeys)
+
 
 async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids_to_query, expected_shape, calculate_metrics):
     """Run prediction phase querying miners in batches and verifying their predictions.
@@ -313,10 +319,7 @@ async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids
             bt.logging.info("[run_prediction_phase] No miners in this batch have a valid prediction. Skipping.")
             continue
 
-
-
         hashes_for_batch = [uid_to_hash[uid] for uid in miner_uids]
-
 
         bt.logging.debug(f"[run_prediction_phase] axons_to_query: {len(axons_to_query)} hashes :{len(hashes_from_uids_to_query)}")
         compressed_predictions = await fetch_predictions_and_verify_hashes(self, sample, hashes_for_batch, axons_to_query)

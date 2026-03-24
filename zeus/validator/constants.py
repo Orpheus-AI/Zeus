@@ -61,4 +61,4 @@ MIN_HOURS_BETWEEN_REQUESTS = 5
 MAX_TIME_OFFSET: int = 48  # full window steps (cache range); challenges run as two 24-step requests
 PERCENTAGE_GOING_TO_WINNER = 0.95
 
-
+PERFORMANCE_DATABASE_URL = "https://performance.zeussubnet.com"
