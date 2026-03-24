@@ -42,7 +42,6 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     
     # Convert torch tensor to numpy array and save
     prediction_numpy = prediction.detach().cpu().to(torch.float32).numpy()
-
     time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
 
     xr_dataarray = xr.DataArray(
@@ -481,7 +480,7 @@ class OptimizedWeatherStorage:
                         bt.logging.warning(f"score_and_prune: output is None for challenge {c_uid}")
                     self._delete_challenge(c_uid)
                 else:
-                    bt.logging.debug(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days)")
+                    bt.logging.warning(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days)")
                 continue
 
             # First get the good miners from the SQL database

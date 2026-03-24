@@ -32,12 +32,13 @@ from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.utils.schedule_time import Scheduler
 from zeus.validator.constants import (
     TESTNET_UID,
-    BEST_FORECASTS_DIRECTORY
+    BEST_FORECASTS_DIRECTORY, 
+    PERFORMANCE_DATABASE_URL
 )
 from zeus.validator.forward import forward
 from zeus.validator.storage import OptimizedWeatherStorage
 from zeus.validator.uid_tracker import UIDTracker
-
+from zeus.validator.performance_database_connection import PerformanceDatabaseConnection
 
 class Validator(BaseValidatorNeuron):
 
@@ -51,6 +52,10 @@ class Validator(BaseValidatorNeuron):
         self.discord_hook = os.environ.get("DISCORD_WEBHOOK")
 
         self.uid_tracker = UIDTracker(self)
+        self.performance_database_api = PerformanceDatabaseConnection(
+            wallet=self.wallet,
+            api_url = PERFORMANCE_DATABASE_URL
+        )
         self.time_scheduler = Scheduler()
         self.latest_good_miners_per_challenge: dict[str, List[int]] = None
     
@@ -81,6 +86,8 @@ class Validator(BaseValidatorNeuron):
     
     def __exit__(self, exc_type, exc_value, traceback):
         super().__exit__(exc_type, exc_value, traceback)
+        if hasattr(self, 'performance_database_api'):
+            self.performance_database_api.close()
 
     def on_error(self, error: Exception, error_message: str):
         super().on_error(error, error_message)
