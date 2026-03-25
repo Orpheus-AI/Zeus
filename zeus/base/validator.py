@@ -91,8 +91,8 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
-
-        self.state_path = os.path.join(self.config.neuron.full_path, "state.json")
+ 
+        self.state_path = os.path.join(self.config.neuron.full_path, "state_v2.json")
         self.state_per_variable, loaded_step = load_state(
             self.state_path
         )
@@ -256,7 +256,8 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid,hotkey in zip(self.metagraph.uids, self.metagraph.hotkeys):
             
             available = check_uid_availability(self.metagraph, uid, self.config.neuron.vpermit_tao_limit, self.metagraph.netuid)
-            if available:
+            is_registered_after_v2 = self.is_registered_after_release_zeus_v2(uid)
+            if available and is_registered_after_v2:
                 miners_hotkeys.append(hotkey)
                 miners_uids.append(uid)
 

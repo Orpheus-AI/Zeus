@@ -20,7 +20,7 @@ import os
 import numpy as np
 import xarray as xr
 
-def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_random: bool):
+def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_random: bool, best_10_hotkeys: list[str]):
     # this is for the proxy to save the best miner prediction after the hash phase is done!
 
     bt.logging.info(f"[save_best_miner_prediction] Begining the process for miner uid {miner.uid}, which is random = {is_random}")
@@ -39,6 +39,10 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
         os.makedirs(self.best_predictions_path, exist_ok=True)
     variable_folder = os.path.join(self.best_predictions_path, sample.variable)
     os.makedirs(variable_folder, exist_ok=True)
+
+    if prediction is None:
+        bt.logging.warning(f"[save_best_miner_prediction] Prediction is None for miner {miner.uid} {miner.hotkey}")
+        return
     
     # Convert torch tensor to numpy array and save
     prediction_numpy = prediction.detach().cpu().to(torch.float32).numpy()
@@ -52,8 +56,10 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
             latitude = np.arange(sample.lat_start, sample.lat_end+0.25, 0.25), 
             longitude = np.arange(sample.lon_start, sample.lon_end+0.25, 0.25)
         ))
-    randomness_tag = "random" if is_random else "best" 
-    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_{randomness_tag}_miner_{miner.hotkey}.nc"
+    
+    rank = f"{best_10_hotkeys.index(miner.hotkey)+1}" if miner.hotkey in best_10_hotkeys else "unknown"
+    randomness_tag = "random" if is_random else f"rank_{rank}" 
+    filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_miner_{miner.hotkey}_{randomness_tag}.nc"
     filepath = os.path.join(variable_folder, filename)
     # Convert DataArray to Dataset with the variable name set to the sample.variable
     xr_dataset = xr.Dataset({sample.variable: xr_dataarray})

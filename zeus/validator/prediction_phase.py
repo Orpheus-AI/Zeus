@@ -53,6 +53,10 @@ def filter_eligible_miners_for_scoring(
         # no need to query a new miner 
         if current_metagraph_hotkey != challenge_hotkey:
             continue
+        
+        is_registered_after_v2 = validator.is_registered_after_release_zeus_v2(miner_uid)
+        if not is_registered_after_v2:
+            continue
 
         miners_uids.append(miner_uid)
         miners_hashes.append(hash)
@@ -101,17 +105,15 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
     Returns:
         List of all MinerData objects (good, bad, and non-committed miners)
     """
-    # we want to score only those miners that were registered after the release of v2
-    is_registered_after_v2 = [self.is_registered_after_release_zeus_v2(m_uid) for m_uid in miner_uids]
-    if not any(is_registered_after_v2):
-        bt.logging.warning(f"[run_final_prediction_phase] No miners registered after v2 found for sample {sample.variable}. Skipping.")
-        return
-    hashes_updated = [c_hash if reg else None for c_hash, reg in zip(hashes, is_registered_after_v2)]
-    is_good_list_updated = [goodness if reg else 0 for goodness, reg in zip(is_good_list, is_registered_after_v2)]
-
-    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes_updated, sample.query_timestamp, is_good_list_updated)
+    # we want to score only those miners that were registered after the release of v2 and were not deregistered
+    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, sample.query_timestamp, is_good_list)
+    
     all_uids_to_query = [uid for uid, is_good in zip(miners_uids, miners_is_good) if is_good]
     hashes_from_uids_to_query = [hash for hash, is_good in zip(miners_hashes, miners_is_good) if is_good]
+
+    if len(all_uids_to_query) == 0:
+        bt.logging.warning(f"[run_final_prediction_phase] No miners registered after v2 without penalties found for sample {sample.variable} {sample.start_timestamp} {sample.end_timestamp}. Skipping.")
+        return
 
     bad_uids = set([uid for uid, is_good in zip(miners_uids, miners_is_good) if not is_good])
 
@@ -263,7 +265,11 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
         # if len(good_miners_data) > 0:
             
         #     for i in range(len(good_miners_data)):
-        #         save_best_miner_prediction(self, sample, good_miners_data[i], query_random_miners)
+        #         try:
+        #             save_best_miner_prediction(self, sample, good_miners_data[i], query_random_miners, best_10_hotkeys)
+        #         except Exception as e:
+        #             bt.logging.warning(f"[_select_top_k_miners_to_query] Error: {e}")
+                    
 
         bad_hotkeys = [miner.hotkey for miner in bad_miners_data]
         if len(bad_hotkeys) > 0:
