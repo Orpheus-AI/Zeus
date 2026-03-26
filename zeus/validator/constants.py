@@ -50,7 +50,7 @@ BEST_FORECASTS_DIRECTORY: Path = CURRENT_DIRECTORY  / "Zeus" / "best_prediction"
 ERA5_CACHE_DIR: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "era5"
 OLD_METADATA_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "challenges.db"
 METADATA_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "challenges_v2.db"
-LATITUDE_WEIGHTS_PATH: Path = CURRENT_DIRECTORY / "Zeus" / "zeus" / "data" / "weights" / "latitude_weights_for_rmse.npy" 
+LATITUDE_WEIGHTS_PATH: Path = Path(__file__).resolve().parent.parent / "data" / "weights" / "latitude_weights_for_rmse.npy"
 COPERNICUS_ERA5_URL: str = "https://cds.climate.copernicus.eu/api"
 
 DEFAULT_STEP_SIZE: int = 1  # hours between prediction time steps (synapse default)
