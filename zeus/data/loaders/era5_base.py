@@ -20,7 +20,6 @@ class Era5BaseLoader(ABC):
 
     def __init__(
         self,
-        max_time_offset: int,
         step_size: int = DEFAULT_STEP_SIZE,
         data_vars: Dict[str, float] = ERA5_DATA_VARS,
         lat_range: Tuple[float, float] = ERA5_LATITUDE_RANGE,
@@ -29,7 +28,6 @@ class Era5BaseLoader(ABC):
     ) -> None:
         self.data_vars, self.data_var_probs = zip(*sorted(data_vars.items()))
         self.data_var_probs = np.array(self.data_var_probs)
-        self.max_time_offset = max_time_offset
         self.step_size = step_size
         self.lat_range = sorted(lat_range)
         self.lon_range = sorted(lon_range)
@@ -154,7 +152,3 @@ class Era5BaseLoader(ABC):
         data = torch.cat([x_grid, y_grid], dim=-1)
         return data
 
-
-    @abstractmethod
-    def get_sample(self) -> Era5Sample:
-        pass

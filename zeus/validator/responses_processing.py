@@ -22,7 +22,7 @@ def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List
     """
     verified_predictions = []
     bt.logging.debug(f"[_verify_hashes]: commitment_store: {hashes_list}")
-    
+    count_success = 0
     for axon, prediction, hash in zip(axons, compressed_predictions, hashes_list):
         hotkey = axon.hotkey
 
@@ -32,6 +32,7 @@ def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List
         if prediction and computed_hash == hash:
             bt.logging.debug(f'[_verify_hashes] Successfull verification for hotkey {hotkey}')
             verified_predictions.append(prediction)
+            count_success += 1
         else:
             if prediction: 
                 bt.logging.warning(f"[_verify_hashes] Hash mismatch for UID {hotkey}. Potential cheating!!!!")
@@ -39,7 +40,7 @@ def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List
                 bt.logging.info(f"[_verify_hashes] No prediction for hotkey {hotkey}")
             verified_predictions.append(None)
 
-    bt.logging.info(f"[_verify_hashes]: length of verified hashes: {len(verified_predictions)}")
+    bt.logging.info(f"[_verify_hashes]: count of successful verifications: {count_success} / length of : {len(verified_predictions)}")
     return verified_predictions
 
 def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> List[bytes]:

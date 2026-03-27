@@ -40,7 +40,6 @@ async def run_all_hash_phases(self, challenges):
         
         str_sample = str(sample)
         
-
         good_miners_data, bad_miners_uids = await _run_single_hash_phase(self, all_uids_to_query, sample)
         bt.logging.warning(f"hash phase:[{str_sample}] {len(bad_miners_uids)} miners do not have a valid hash or did not respond: {bad_miners_uids}")
         if len(bad_miners_uids) > 0:
@@ -49,8 +48,6 @@ async def run_all_hash_phases(self, challenges):
             bt.logging.warning(f'good miners uids: {good_miners_uids}')
             bad_miners_data = _build_bad_miners_data(self, bad_miners_uids)
 
-
-
             successful_insertion = self.database.insert(sample, bad_miners_data, good_miners=False)
             bt.logging.warning(f"successful_insertion of bad miners? {successful_insertion}")
             if successful_insertion:
@@ -58,9 +55,6 @@ async def run_all_hash_phases(self, challenges):
                 bt.logging.success(f"Storing bad miner responses in SQLite database: {bad_miners_uids}")
         
       
-    
-
-
 async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: List[int], sample: Era5Sample):
     """Run hash phase for a single challenge, querying miners in batches.
     
@@ -109,8 +103,15 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
         end_time = time.time()
         bt.logging.warning(f"Time taken to query hashes: {end_time - start_time} seconds")
        
+
         batch_good_miners_data = _parse_hashes(miner_uids, axons_to_query, responses)
+
         batch_successful_uids = [miner_data.uid for miner_data in batch_good_miners_data]
+
+        queried_miners_corresponding_attempts = self.uid_tracker.get_current_strike(miner_uids)
+        
+        self.performance_database_api.log_hash_responses_info(sample, start_time, responses, miner_uids, queried_miners_corresponding_attempts, batch_successful_uids)
+
         good_miners_data.extend(batch_good_miners_data)
        
         if len(batch_good_miners_data) > 0:

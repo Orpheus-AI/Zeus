@@ -24,6 +24,7 @@ def custom_rmse(
         output_data: torch.Tensor, # 3d shape (hours, latitude, longitude)
         prediction: torch.Tensor, # 3d shape (hours, latitude, longitude)
         latitude_weights: torch.Tensor,
+        europe_weight: torch.Tensor = None,
         default: Optional[float] = None,
 ) -> float:
     """Calculates RMSE between miner prediction and correct output taking into account the lat"""
@@ -35,7 +36,14 @@ def custom_rmse(
         
         cosine_rmse =  result.mean().sqrt().item()
 
-        return cosine_rmse
+        if europe_weight is not None and europe_weight.ndim != 3:
+            europe_weight = europe_weight[None, ...]
+
+        europe_rmse = result * europe_weight
+        europe_weighted_rmse = europe_rmse.mean().sqrt().item()
+
+        return cosine_rmse, europe_weighted_rmse
+
     except Exception as e:
         # shape error etc
         if default is None:
@@ -47,6 +55,7 @@ def custom_mae(
         output_data: torch.Tensor, # 3d shape (hours, latitude, longitude)
         prediction: torch.Tensor, # 3d shape (hours, latitude, longitude))
         latitude_weights: torch.Tensor,
+        europe_weight: torch.Tensor = None,
         default: Optional[float] = None,
 ) -> float:
     """Calculates MAE between miner prediction and correct output taking into account the lat"""
@@ -58,7 +67,13 @@ def custom_mae(
         
         cosine_mae = result.mean().item()
 
-        return cosine_mae
+        if europe_weight is not None and europe_weight.ndim != 3:
+            europe_weight = europe_weight[None, ...]
+
+        europe_mae = result * europe_weight
+        europe_weighted_mae = europe_mae.mean().item()
+
+        return cosine_mae, europe_weighted_mae
 
     except Exception as e:
         # shape error etc

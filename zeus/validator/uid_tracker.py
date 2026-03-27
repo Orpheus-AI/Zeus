@@ -53,6 +53,12 @@ class UIDTracker:
         
 
         return selected
+    
+    def get_current_strike(self, uids: List[int]):
+        if self.count_map:
+            return [self.count_map.get(uid, 0) for uid in uids]
+        return None
+
 
 
 
