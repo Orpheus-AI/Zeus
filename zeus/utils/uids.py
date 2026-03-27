@@ -1,6 +1,7 @@
 import random
 import bittensor as bt
 import numpy as np
+import pandas as pd
 from typing import Set
 
 
@@ -34,7 +35,6 @@ def check_uid_availability(
 
 def get_available_uids(
     metagraph: "bt.metagraph.Metagraph",
-
     vpermit_tao_limit: int,
     mainnet_uid: int,
     exclude: Set[int] = None,
@@ -54,12 +54,23 @@ def get_available_uids(
         exclude = set()
 
     avail_uids = []
+    
+    current_block = metagraph.block.item() if hasattr(metagraph.block, "item") else metagraph.block
+    cutoff_date = pd.Timestamp('2026-03-17 18:00:00', tz='UTC')
+    
     for uid in range(metagraph.n.item()):
         available = check_uid_availability(
             metagraph, uid, vpermit_tao_limit, mainnet_uid
         )
+        
         if available:
-            avail_uids.append(uid)
+            reg_block = metagraph.block_at_registration[uid].item() if hasattr(metagraph.block_at_registration[uid], "item") else metagraph.block_at_registration[uid]
+            blocks_elapsed = current_block - reg_block
+            seconds_elapsed = blocks_elapsed * 12
+            estimated_reg_date = pd.Timestamp.now("UTC") - pd.Timedelta(seconds=seconds_elapsed)
+            
+            if estimated_reg_date >= cutoff_date:
+                avail_uids.append(uid)
 
     candidate_uids = [uid for uid in avail_uids if uid not in exclude]
     return candidate_uids

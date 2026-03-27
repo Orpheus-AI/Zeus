@@ -148,13 +148,13 @@ def add_validator_args(cls, parser):
         "--neuron.hash_timeout",
         type=float,
         help="The timeout for each forward call in hash phase in seconds.",
-        default=18,
+        default=15,
     )
     parser.add_argument(
         "--neuron.prediction_timeout",
         type=float,
         help="The timeout for each forward call in prediction phase in seconds.",
-        default=26,
+        default=52,
     )
 
     parser.add_argument(

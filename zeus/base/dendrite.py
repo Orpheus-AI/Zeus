@@ -178,7 +178,7 @@ class ZeusDendrite(bt.Dendrite):
                         if bytes_read > max_body_bytes:
                             # Close the connection immediately to stop the flow
                             response.close() 
-                            raise ValueError("Miner sent too much data (Byte Limit Exceeded)")
+                            raise ValueError(f"Miner sent too much data (Byte Limit Exceeded) bytes_read: {bytes_read} max_body_bytes: {max_body_bytes} for dendrite: {self._settings}")
                         chunks.append(chunk)
 
                     body = b"".join(chunks)

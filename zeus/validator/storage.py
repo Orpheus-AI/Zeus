@@ -12,7 +12,8 @@ import torch
 
 from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.data.sample import Era5Sample
-from zeus.validator.constants import METADATA_DATABASE_LOCATION
+from zeus.validator.challenge_spec import offsets_from_predict_hours
+from zeus.validator.constants import METADATA_DATABASE_LOCATION, TIME_WINDOWS_PER_CHALLENGE
 from zeus.validator.miner_data import MinerData
 from zeus.utils.time import to_timestamp
 from zeus.utils.compression import decompress_prediction
@@ -37,7 +38,9 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     # Create subdirectory for the variable if it doesn't exist
     if not os.path.exists(self.best_predictions_path):
         os.makedirs(self.best_predictions_path, exist_ok=True)
-    variable_folder = os.path.join(self.best_predictions_path, sample.variable)
+    
+    variable_name = sample.variable.split("@")[0]
+    variable_folder = os.path.join(self.best_predictions_path, variable_name)
     os.makedirs(variable_folder, exist_ok=True)
 
     if prediction is None:
@@ -466,8 +469,20 @@ class OptimizedWeatherStorage:
         for chal in challenges:
             bt.logging.warning(f"score_and_prune: chal: {chal}")
             c_uid, lat_s, lat_e, lon_s, lon_e, start_t, end_t, hours, ins_at, var = chal
-            
-            sample = Era5Sample(start_t, end_t, lat_s, lat_e, lon_s, lon_e, var, ins_at, None, hours)
+
+            try:
+                start_offset, end_offset = offsets_from_predict_hours(hours, TIME_WINDOWS_PER_CHALLENGE)
+            except ValueError:
+                # TODO check currently in the competition if same amount of hours
+                bt.logging.warning(
+                    f"score_and_prune: challenge {c_uid} has hours_to_predict={hours} "
+                    f"that doesn't match any current window, deleting"
+                )
+                self._delete_challenge(c_uid)
+                continue
+
+            sample = Era5Sample(start_t, end_t, lat_s, lat_e, lon_s, lon_e, var, ins_at, None, hours,
+                                start_offset=start_offset, end_offset=end_offset)
             output = self.cds_loader.get_output(sample)
             sample.output_data = output
             #bt.logging.warning(f'score_and_prune: output: {output}')
@@ -486,7 +501,7 @@ class OptimizedWeatherStorage:
                         bt.logging.warning(f"score_and_prune: output is None for challenge {c_uid}")
                     self._delete_challenge(c_uid)
                 else:
-                    bt.logging.warning(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days)")
+                    bt.logging.warning(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days) end_t: {to_timestamp(end_t)}, latest: {to_timestamp(latest_available)}")
                 continue
 
             # First get the good miners from the SQL database

@@ -38,7 +38,7 @@ class ERA5GoogleLoader(Era5BaseLoader):
         self.input_hours = input_hours
         self._predict_range = HISTORIC_HOURS_PREDICT_RANGE
 
-        super().__init__(max_time_offset=HISTORIC_HOURS_PREDICT_RANGE[1], step_size=1, **kwargs)
+        super().__init__(step_size=1, **kwargs)
 
     def load_dataset(self) -> xr.Dataset:
         dataset = xr.open_zarr(
@@ -47,41 +47,7 @@ class ERA5GoogleLoader(Era5BaseLoader):
         dataset = dataset[list(self.data_vars)]  # slice out anything we won't use.
         return dataset
 
-    def get_sample(self) -> Era5Sample:
-        """Random bbox and time range from historic dataset."""
-        lat_start, lat_end, lon_start, lon_end = self.sample_bbox()
-        latest_day = (self.date_range[1] - self.date_range[0]).days - math.ceil(
-            self._predict_range[1] / 24
-        )
-        start_time = self.date_range[0] + pd.Timedelta(days=np.random.randint(0, latest_day))
-        predict_hours = np.random.randint(*self._predict_range)
-        end_time = start_time + pd.Timedelta(hours=predict_hours - 1)
-
-        data4d = self.get_data(
-            lat_start=lat_start,
-            lat_end=lat_end,
-            lon_start=lon_start,
-            lon_end=lon_end,
-            start_time=start_time - pd.Timedelta(hours=self.input_hours),
-            end_time=end_time,
-        ) 
-        # slice off lat, lon and flatten last dimension
-        data = data4d[..., 2:].squeeze(dim=-1)
-
-        input_data = data[:-predict_hours] # input_hours amount
-        input_data = interp_distort(input_data)
-        output_data = data[-predict_hours:]
-
-        return Era5Sample(
-            lat_start=lat_start,
-            lat_end=lat_end,
-            lon_start=lon_start,
-            lon_end=lon_end,
-            start_timestamp=start_time.timestamp(),
-            end_timestamp=end_time.timestamp(),
-            output_data=output_data,
-            step_size=1,
-        )
+ 
 
 
 def interp_distort(matrix: torch.Tensor, num_distortions: Optional[int] = None) -> torch.Tensor:

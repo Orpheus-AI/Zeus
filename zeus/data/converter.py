@@ -28,6 +28,9 @@ class VariableConverter(ABC):
 
     def om_to_era5(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
         return data
+
+    def era5_to_target(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
+        return data
     
 
 class TemperatureConverter(VariableConverter):
@@ -97,7 +100,18 @@ class SurfacePressureConverter(VariableConverter):
     def om_to_era5(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
         """hectopascal to pascal"""
         return data * 100
-         
+
+
+class SurfaceSolarRadiationDownwardsConverter(VariableConverter):
+    def era5_to_om(self, data: Any) -> Any:
+        raise NotImplementedError
+
+    def om_to_era5(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
+        raise NotImplementedError
+    
+    def era5_to_target(self, data: Union[float, np.ndarray, torch.Tensor]) -> Union[float, np.ndarray, torch.Tensor]:
+        return data / 3600
+     
 
 REGISTRY = {converter.data_var: converter for converter in [
         TemperatureConverter("2m_temperature", om_name="temperature_2m", short_code="t2m", unit="K"), 
@@ -115,7 +129,8 @@ REGISTRY = {converter.data_var: converter for converter in [
             unit="m/s",
         ),
         TemperatureConverter("2m_dewpoint_temperature", om_name="dew_point_2m", short_code="d2m", unit="K"),
-        SurfacePressureConverter("surface_pressure", om_name="surface_pressure", short_code="sp", unit="Pa")
+        SurfacePressureConverter("surface_pressure", om_name="surface_pressure", short_code="sp", unit="Pa"),
+        SurfaceSolarRadiationDownwardsConverter("surface_solar_radiation_downwards", om_name="surface_solar_radiation_downwards", short_code="ssrd", unit="W/m^2")
 ]}
 
 def get_converter(data_var: str) -> VariableConverter:

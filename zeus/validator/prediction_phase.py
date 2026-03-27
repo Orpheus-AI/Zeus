@@ -15,7 +15,6 @@ from zeus.data.sample import Era5Sample
 from zeus.protocol import TimePredictionSynapse
 from zeus.utils.compression import decompress_prediction
 from zeus.utils.time import to_timestamp
-from zeus.validator.constants import PREDICTION_DENDRITE_SETTINGS
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (
     _build_bad_miners_data,
@@ -30,7 +29,6 @@ def filter_eligible_miners_for_scoring(
     current_challenge_all_miner_hotkeys: List[str],
     miner_uids_list: List[int],
     hashes_list: List[str],
-    query_timestamp: float,
     list_is_good: List[bool],
 ) -> Tuple[List[int], List[str], List[bool], List[str]]:
     """
@@ -67,15 +65,23 @@ def filter_eligible_miners_for_scoring(
 
 
 
+def _get_prediction_dendrite(self, sample: Era5Sample):
+    """Resolve the correct prediction ZeusDendrite for a given sample's time window."""
+    spec = self.challenge_registry.get(sample.state_key)
+    if spec is None:
+        raise ValueError(f"No ChallengeSpec for state_key={sample.state_key}")
+    return self.prediction_dendrites[spec.prediction_dendrite_settings]
+
+
 async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_list: List[str], axons_to_query: List[bt.Axon]) -> List[Optional[bytes]]:
     """
     Handles a single batch of miners. Variables here are cleared from memory 
     once the function returns to run_single_hash_challenge.
     """
 
- 
+    dendrite = _get_prediction_dendrite(self, sample)
     start_time = time.time()
-    responses: List[TimePredictionSynapse] = await self.dendrite_prediction(
+    responses: List[TimePredictionSynapse] = await dendrite(
         axons=axons_to_query,
         synapse=sample.build_synapse(TimePredictionSynapse),
         deserialize=False,
@@ -106,7 +112,7 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
         List of all MinerData objects (good, bad, and non-committed miners)
     """
     # we want to score only those miners that were registered after the release of v2 and were not deregistered
-    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, sample.query_timestamp, is_good_list)
+    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good_list)
     
     all_uids_to_query = [uid for uid, is_good in zip(miners_uids, miners_is_good) if is_good]
     hashes_from_uids_to_query = [hash for hash, is_good in zip(miners_hashes, miners_is_good) if is_good]
@@ -242,7 +248,6 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
 
     for sample in challenges:
-        target_variable = sample.variable
         sample_str = str(sample)
 
         good_hashes, good_hotkeys = self.database.get_hashing_data_for_sample(sample)
@@ -253,8 +258,9 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
         filtered_good_hashes, filtered_good_hotkeys = filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query)
         
-        if target_variable in self.state_per_variable:
-            best_10_hotkeys = self.state_per_variable[target_variable].best_10_miners  
+        state_key = sample.state_key
+        if state_key in self.state_per_challenge:
+            best_10_hotkeys = self.state_per_challenge[state_key].best_10_miners  
         else:
             best_10_hotkeys = []
         
@@ -297,7 +303,11 @@ async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids
         MinerData objects with valid predictions, and bad_miners_data contains
         MinerData objects for miners that failed
     """
-    settings = PREDICTION_DENDRITE_SETTINGS
+    spec = self.challenge_registry.get(sample.state_key)
+    if spec is None:
+        bt.logging.error(f"[run_prediction_phase] No ChallengeSpec for state_key={sample.state_key}")
+        return [], []
+    settings = spec.prediction_dendrite_settings
     bt.logging.info(f'[run_prediction_phase] The number of all miners uids is {len(all_uids_to_query)}')
     steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / settings.response_batch_k)
 

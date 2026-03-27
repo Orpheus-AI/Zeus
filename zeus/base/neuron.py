@@ -170,7 +170,7 @@ class BaseNeuron(ABC):
   
         # Define appropriate logic for when set weights.
         return (
-            len(self.state_per_variable.values()) == 0
+            len(self.state_per_challenge.values()) == 0
             and blocks_since_lat_update > UPDATE_EVERY_N_BLOCKS)
   
 

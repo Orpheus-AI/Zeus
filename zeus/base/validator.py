@@ -31,7 +31,7 @@ import bittensor as bt
 import numpy as np
 import pandas as pd
 
-from zeus.base.dendrite import ZeusDendrite
+from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
@@ -41,12 +41,31 @@ from zeus.utils.config import add_validator_args
 from zeus.utils.results_state import ResultsState, load_state, save_state
 from zeus.utils.uids import check_uid_availability
 from zeus.validator.constants import (
-    ERA5_DATA_VARS,
+    CHALLENGE_REGISTRY,
     HASH_DENDRITE_SETTINGS,
-    PREDICTION_DENDRITE_SETTINGS,
     RANK_HISTORY_PRUNE_LEN,
 )
+from zeus.validator.challenge_spec import ChallengeSpec
 from zeus.validator.reward import compute_min_rank_weights
+
+
+def _count_windows_per_variable(registry: Dict[str, ChallengeSpec]) -> Dict[str, int]:
+    """Total number of time-window challenges registered for each ERA5 variable."""
+    counts: Dict[str, int] = {}
+    for spec in registry.values():
+        counts[spec.variable] = counts.get(spec.variable, 0) + 1
+    return counts
+
+
+def _count_available_per_variable(
+    available_keys: List[str], registry: Dict[str, ChallengeSpec]
+) -> Dict[str, int]:
+    """How many of the available (have rank_history) challenges belong to each variable."""
+    counts: Dict[str, int] = {}
+    for key in available_keys:
+        var = registry[key].variable
+        counts[var] = counts.get(var, 0) + 1
+    return counts
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -78,22 +97,30 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
         self.challenges = []
 
-        # Two dendrites: one for hash (commit) phase, one for prediction (reveal) phase.
+        # Hash dendrite (single, shared across all challenges)
         self.dendrite_hash = ZeusDendrite(
             wallet=self.wallet,
             settings=HASH_DENDRITE_SETTINGS,
         )
-        self.dendrite_prediction = ZeusDendrite(
-            wallet=self.wallet,
-            settings=PREDICTION_DENDRITE_SETTINGS,
+
+        # Prediction dendrites: one per unique DendriteSettings across all challenge windows
+        unique_settings = {spec.prediction_dendrite_settings for spec in CHALLENGE_REGISTRY.values()}
+        self.prediction_dendrites: Dict[DendriteSettings, ZeusDendrite] = {
+            settings: ZeusDendrite(wallet=self.wallet, settings=settings)
+            for settings in unique_settings
+        }
+        bt.logging.info(
+            "Dendrites: hash=%s, prediction=%d unique settings",
+            self.dendrite_hash, len(self.prediction_dendrites),
         )
-        bt.logging.info("Dendrites: hash=%s prediction=%s", self.dendrite_hash, self.dendrite_prediction)
+
+        self.challenge_registry = CHALLENGE_REGISTRY
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
  
-        self.state_path = os.path.join(self.config.neuron.full_path, "state_v2.json")
-        self.state_per_variable, loaded_step = load_state(
+        self.state_path = os.path.join(self.config.neuron.full_path, "state_v3.json")
+        self.state_per_challenge, loaded_step = load_state(
             self.state_path
         )
         if loaded_step is not None:
@@ -272,51 +299,53 @@ class BaseValidatorNeuron(BaseNeuron):
         """
         bt.logging.info("Setting weights")
         miners_hotkeys, miners_uids = self.find_miners()
-        variable_weights_list = []
-        variable_scaler = []
+        challenge_weights_list = []
+        challenge_scaler = []
 
-        if len(self.state_per_variable.values()) > 0:
-            # Calculate weights for every variable we track
-            for var_name, state in self.state_per_variable.items():
-                bt.logging.info(f"Calculating weights for variable {var_name}")
-                variable_scaler.append(ERA5_DATA_VARS[var_name])
-                if state.rank_history:
-                    max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
-                    window_size = min(self.config.neuron.score_time_window, max_len)            
-            
-                    weights, miners_metadata = compute_min_rank_weights(
-                        metagraph_size=self.metagraph.n,
-                        hotkeys=self.metagraph.hotkeys,
-                        rank_history=state.rank_history,
-                        uids=self.metagraph.uids,
-                        window_size=window_size,
-                        miners_hotkeys=miners_hotkeys,
-                    )
-                    best_10_miners_hotkeys = [m["hotkey"] for m in miners_metadata[:10]]
-                    variable_weights_list.append(weights)
-                    state.best_10_miners = best_10_miners_hotkeys
-                    
-                    self.performance_database_api.log_rank_aggregates(miners_metadata, var_name)
+        available_keys = [
+            challenge_name for challenge_name, state in self.state_per_challenge.items()
+            if self.challenge_registry.get(challenge_name) is not None and state.rank_history
+        ]
 
-                else: # no rank history yet, reward responing miners
-                    bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
-                    weights = self.reward_responders( # of no responding miners were found, the weights would be all 0, but that handles below
-                        metagraph_size=self.metagraph.n, 
-                        uids=self.metagraph.uids, 
-                        hotkeys=self.metagraph.hotkeys
-                        )
-                    variable_weights_list.append(weights)
-                    state.best_10_miners = [] # there are no best miners in the first 7 days
+        if available_keys:
+            windows_per_var = _count_windows_per_variable(self.challenge_registry)
+            available_per_var = _count_available_per_variable(available_keys, self.challenge_registry)
 
-            # Updating who is the best_miner per challenge
+            for state_key in available_keys:
+                spec = self.challenge_registry[state_key]
+                state = self.state_per_challenge[state_key]
+
+                effective_weight = spec.weight * windows_per_var[spec.variable] / available_per_var[spec.variable]
+                bt.logging.info(
+                    f"Calculating weights for {state_key} "
+                    f"(effective_weight={effective_weight:.4f}, "
+                    f"{available_per_var[spec.variable]}/{windows_per_var[spec.variable]} windows available)"
+                )
+
+                max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
+                window_size = min(self.config.neuron.score_time_window, max_len)
+
+                weights, miners_metadata = compute_min_rank_weights(
+                    metagraph_size=self.metagraph.n,
+                    hotkeys=self.metagraph.hotkeys,
+                    rank_history=state.rank_history,
+                    uids=self.metagraph.uids,
+                    window_size=window_size,
+                    miners_hotkeys=miners_hotkeys,
+                )
+                state.best_10_miners = [m["hotkey"] for m in miners_metadata[:10]]
+                challenge_weights_list.append(weights)
+                challenge_scaler.append(effective_weight)
+
+                self.performance_database_api.log_rank_aggregates(miners_metadata, state_key)
+
             save_state(
                 self.state_path,
-                self.state_per_variable, 
+                self.state_per_challenge, 
                 step=self.step,
             )
 
-            # Combine all variables into one weight matrix with the corresponding weights
-            raw_weights = np.average(variable_weights_list, axis=0, weights=variable_scaler)
+            raw_weights = np.average(challenge_weights_list, axis=0, weights=challenge_scaler)
 
         else: # no rank history for any variable
             bt.logging.warning("No rank history so rewarding responding miners first 7 days.")
@@ -436,7 +465,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Define our cutoff date: March 17, 2026 at 15:00
         cutoff_date = pd.Timestamp('2026-03-17 18:00:00', tz='UTC')
 
-        bt.logging.debug(f"[is_registered_after_zeus_v2] UID {uid} estimated registration: {estimated_reg_date.strftime('%d.%m.%Y %H:%M:%S')}")
+        # bt.logging.debug(f"[is_registered_after_zeus_v2] UID {uid} estimated registration: {estimated_reg_date.strftime('%d.%m.%Y %H:%M:%S')}")
 
         # Return True if registered on/after cutoff, False if before
         return estimated_reg_date >= cutoff_date
@@ -464,14 +493,14 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Zero out all hotkeys that have been replaced but maybe they registered again in between
         hotkeys_to_prune = []
-        for state in self.state_per_variable.values():
+        for state in self.state_per_challenge.values():
             pruned_hotkeys = state.prune(self.hotkeys, RANK_HISTORY_PRUNE_LEN)
             if pruned_hotkeys:
                 hotkeys_to_prune.extend(pruned_hotkeys)
         hotkeys_to_prune = list(set(hotkeys_to_prune))
         save_state(
             self.state_path,
-            self.state_per_variable,
+            self.state_per_challenge,
             step=self.step,
         )
 
@@ -489,28 +518,28 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Saving validator state.")
         save_state(
             self.state_path,
-            self.state_per_variable,
+            self.state_per_challenge,
             step=self.step,
         )
 
     def load_state(self):
         """Load variable state, step, and hotkeys from disk."""
         bt.logging.info("Loading validator state.")
-        state_per_variable, loaded_step = load_state(
+        state_per_challenge, loaded_step = load_state(
             self.state_path
         )
-        self.state_per_variable = state_per_variable
+        self.state_per_challenge = state_per_challenge
         if loaded_step is not None:
             self.step = loaded_step
 
-    def update_scores(self, rewards: np.ndarray, hotkeys_list: List[str], var_name: str):
+    def update_scores(self, rewards: np.ndarray, hotkeys_list: List[str], state_key: str):
         """Appends rank (reward) to rank_history for each hotkey. rewards are ranks from set_rewards (min RMSE -> 1).
         Attribution is by hotkey so it remains correct after metagraph resync or delayed scoring."""
 
-        if var_name not in self.state_per_variable:
-            if var_name not in ERA5_DATA_VARS:
-                raise ValueError(f"Variable {var_name} not found in variables.")
-            self.state_per_variable[var_name] = ResultsState(name=var_name)
+        if state_key not in self.state_per_challenge:
+            if state_key not in self.challenge_registry:
+                raise ValueError(f"state_key {state_key} not found in challenge registry.")
+            self.state_per_challenge[state_key] = ResultsState(name=state_key)
 
         # Check if rewards contains NaN values.
         if np.isnan(rewards).any():
@@ -531,14 +560,14 @@ class BaseValidatorNeuron(BaseNeuron):
             )
 
         
-        state = self.state_per_variable[var_name]
+        state = self.state_per_challenge[state_key]
         state.insert_rank_history(rewards, hotkeys_list)
   
-        bt.logging.debug(f"Appended ranks to rank_history: {rewards}")
+        bt.logging.debug(f"Appended ranks to rank_history for {state_key}: {rewards}")
         state.prune(self.metagraph.hotkeys, RANK_HISTORY_PRUNE_LEN)
         save_state(
             self.state_path,
-            self.state_per_variable,
+            self.state_per_challenge,
             step=self.step,
         )
 
