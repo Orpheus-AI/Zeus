@@ -63,7 +63,7 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
     
     for i, val in enumerate(values):
         # Comparison with rounding to handle float noise
-        if val == float('inf') or val is None:
+        if val == np.inf or val is None:
             inf_rank = len(values)
             ranks.append(inf_rank)
             continue
@@ -88,19 +88,19 @@ def set_errors(sample: Era5Sample, miner_uids: List[int], axons_to_query: List, 
         if prediction is None:
             temp_tensor = None
         else:
-            temp_tensor = decompress_prediction(prediction, expected_shape)
+            temp_tensor = decompress_prediction(prediction)
             
 
         is_penalized = should_apply_shape_penalty(expected_shape, temp_tensor)
         if is_penalized:
-            europe_weighted_rmse = float('inf')
-            europe_weighted_mae = float('inf')
+            europe_weighted_rmse = np.inf
+            europe_weighted_mae = np.inf
         else:
             cosine_rmse, europe_weighted_rmse = custom_rmse(output_data, temp_tensor, latitude_weights, europe_weight)
             cosine_mae, europe_weighted_mae = custom_mae(output_data, temp_tensor, latitude_weights, europe_weight) 
 
-        if math.isnan(europe_weighted_rmse): europe_weighted_rmse = float('inf')
-        if math.isnan(europe_weighted_mae): europe_weighted_mae = float('inf')
+        if math.isnan(europe_weighted_rmse): europe_weighted_rmse = np.inf
+        if math.isnan(europe_weighted_mae): europe_weighted_mae = np.inf
 
         # prediction is not needed anymore, so we set it to None to save memory
         miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=None, rmse=europe_weighted_rmse, mae = europe_weighted_mae, shape_penalty=is_penalized)
@@ -111,7 +111,7 @@ def set_errors(sample: Era5Sample, miner_uids: List[int], axons_to_query: List, 
 def calculate_scores(miners_data: List[MinerData]) -> List[MinerData]:
     for miner in miners_data:
         if miner.rmse is None or miner.mae is None:
-            score = float('inf')
+            score = np.inf
         else:	
             score = (miner.rmse + miner.mae)/2
         
@@ -122,9 +122,9 @@ def calculate_scores(miners_data: List[MinerData]) -> List[MinerData]:
 # None metrics sort last (treated as worst)
 def _sort_key(m):
     return (
-        m.score if m.score is not None else float("inf"), # lower is better
-        m.rmse if m.rmse is not None else float("inf"),
-        m.mae if m.mae is not None else float("inf"),
+        m.score if m.score is not None else np.inf, # lower is better
+        m.rmse if m.rmse is not None else np.inf,
+        m.mae if m.mae is not None else np.inf,
         m.uid or 0,
     )
 
@@ -203,8 +203,8 @@ def compute_min_rank_weights(
             tie_breaker = tuple(reversed(last_n))
             miner_window_size = len(last_n)
         else:
-            avg_rank = float('inf')
-            tie_breaker = (float('inf'),) * window_size
+            avg_rank = np.inf
+            tie_breaker = (np.inf,) * window_size
             miner_window_size = 0
         
         miners_metadata.append({

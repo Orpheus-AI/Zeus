@@ -18,6 +18,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import base64
+import sys
 import time
 import typing
 
@@ -33,9 +34,10 @@ from zeus.protocol import (
     PredictionSynapse,
     TimePredictionSynapse,
 )
+from zeus.validator.constants import ForecastType
 from zeus.utils.compression import compress_prediction
 from zeus.utils.hash import prediction_hash
-from zeus.utils.time import to_timestamp
+from zeus.utils.time import get_today, to_timestamp
 
 
 class Miner(BaseMinerNeuron):
@@ -51,7 +53,7 @@ class Miner(BaseMinerNeuron):
         super(Miner, self).__init__(config=config)
 
         bt.logging.info("Attaching forward functions to miner axon.")
-        # Register both synapse types so the axon accepts HashedTimePredictionSynapse and TimePredictionSynapse.
+        # Register both synapse types so the axon accepts HashedTimePredictionSynapse and TimePredictionSynapse..
         self.axon.attach(
             forward_fn=self._forward_hashed,
             blacklist_fn=self._blacklist_hashed,
@@ -66,6 +68,16 @@ class Miner(BaseMinerNeuron):
         
         # TODO(miner): Anything specific to your use case you can do here
 
+    def pre_compute_predictions(self):
+        """
+        This function precomputes and saves the predictions. 
+        Given that the requests are at 00, 06, 12, 18 o'clock, 
+        the predictions are precomputed one hour prior to request time. 
+
+        This function return nothing
+        """
+        # TODO(miner): Anything specific to your use case you can do here 
+        
         # Validators send requests to the miners for the forecast in the next 48hours in step of 1 hour every 6 hours starting at 00 (00, 06, 12, 18).
         # Because this is known and schedules, miners should precompute and save their forecast
         
@@ -85,33 +97,13 @@ class Miner(BaseMinerNeuron):
         self.compressed_forecast_short = compress_prediction(precomputed_forecast_short)
         bt.logging.info("Done precomputing prediction")
 
-    def pre_compute_predictions(self):
-        """
-        This function precomputes and saves the predictions. 
-        Given that the requests are at 00, 06, 12, 18 o'clock, 
-        the predictions are precomputed one hour prior to request time. 
-
-        This function return nothing
-        """
-        # TODO(miner): Anything specific to your use case you can do here 
-
-    async def forward(self, synapse: PredictionSynapse) -> bytes:
-        """
-        Loads predictions, compress, returns the compression.
-        """
-
-        bt.logging.info(f"Received a request for start time {to_timestamp(synapse.start_time)} for variable {synapse.variable} with step size {synapse.step_size}")
-        if synapse.requested_hours == 49:
-            return self.compressed_forecast_short
-        return self.compressed_forecast_long
-
     async def _forward_hashed(self, synapse: HashedTimePredictionSynapse) -> HashedTimePredictionSynapse:
         """Axon endpoint for commit-phase (hash-only) requests."""
 
         bt.logging.warning(f"Hash Request from validator hotkey: {synapse.dendrite.hotkey}")
 
         synapse.version = zeus_version
-        if synapse.requested_hours == 49:
+        if synapse.forecase_type == ForecastType.SHORT_TERM:
             synapse.hash = prediction_hash(self.compressed_forecast_short, self.wallet.hotkey.ss58_address)
         else:
             synapse.hash = prediction_hash(self.compressed_forecast_long, self.wallet.hotkey.ss58_address)
@@ -119,7 +111,7 @@ class Miner(BaseMinerNeuron):
 
     async def _forward_unhashed_predictions(self, synapse: TimePredictionSynapse) -> TimePredictionSynapse:
         """Axon endpoint for reveal-phase (predictions) requests."""
-        now = pd.Timestamp.now("UTC")
+        now = get_today()
         # Miners don't reveal outside of those hours as your forecast might be used for relay mining
         if (now.hour%6 == 0 and now.minute <= 40 ) and to_timestamp(synapse.end_time) > now - pd.Timedelta(days = 4):
             return synapse
@@ -127,10 +119,10 @@ class Miner(BaseMinerNeuron):
         bt.logging.warning(f"Prediction Request from validator hotkey: {synapse.dendrite.hotkey}")
 
         synapse.version = zeus_version
-        if synapse.requested_hours == 49:
-            synapse.predictions = base64.b64encode(self.compressed_forecast_short).decode("ascii")
+        if synapse.forecase_type == ForecastType.SHORT_TERM:
+            synapse.predictions = self.compressed_forecast_short
         else:
-            synapse.predictions = base64.b64encode(self.compressed_forecast_long).decode("ascii")
+            synapse.predictions = self.compressed_forecast_long
         return synapse
 
     async def _blacklist_hashed(self, synapse: HashedTimePredictionSynapse) -> typing.Tuple[bool, str]:

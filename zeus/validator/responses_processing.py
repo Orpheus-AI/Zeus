@@ -1,15 +1,14 @@
-from typing import List
+from typing import List, Optional
 
 import bittensor as bt
 
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.protocol import TimePredictionSynapse
-from zeus.utils.compression import decode_base64_to_compressed
 from zeus.utils.hash import prediction_hash
 from zeus.validator.miner_data import MinerData
 
 
-def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List[str]) -> List[bool]:
+def _verify_hashes(axons, compressed_predictions: List[Optional[bytes]], hashes_list: List[str]) -> List[bytes]:
     """Verify that compressed predictions match their committed hashes.
     
     Args:
@@ -43,7 +42,7 @@ def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List
     bt.logging.info(f"[_verify_hashes]: count of successful verifications: {count_success} / length of : {len(verified_predictions)}")
     return verified_predictions
 
-def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> List[bytes]:
+def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> List[Optional[bytes]]:
     """Extract and decode to bytes to create compressed predictions from miner responses.
     
     Args:
@@ -56,8 +55,7 @@ def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> Lis
     count_normal = 0
     for r in responses:
         if getattr(r, "predictions", None) is not None:
-            # Decode to bytes
-            compressed_predictions.append(decode_base64_to_compressed(r.predictions))
+            compressed_predictions.append(r.predictions)
             # FREE THE MEMORY: Delete the base64 string from the synapse
             r.predictions = None 
             count_normal += 1

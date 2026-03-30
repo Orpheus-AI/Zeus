@@ -1,6 +1,3 @@
-import asyncio
-
-import json
 import pathlib
 import sqlite3
 import time
@@ -31,9 +28,8 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     end_time = sample.end_timestamp
     end_time_timespamp =  to_timestamp(end_time)
     end_time_str = end_time_timespamp.strftime("%Y%m%d%H")
-    correct_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
 
-    prediction = decompress_prediction(miner.prediction, correct_shape)
+    prediction = decompress_prediction(miner.prediction)
     
     # Create subdirectory for the variable if it doesn't exist
     if not os.path.exists(self.best_predictions_path):

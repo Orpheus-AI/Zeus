@@ -26,7 +26,6 @@ import bittensor as bt
 from discord_webhook import DiscordEmbed, DiscordWebhook
 from dotenv import load_dotenv
 
-import zeus
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.utils.schedule_time import Scheduler

@@ -14,30 +14,20 @@ def compress_prediction(tensor: Union[torch.Tensor, np.ndarray]) -> bytes:
     else:
         raise ValueError(f"Unsupported tensor type: {type(tensor)}")
 
-    data = arr.tobytes()
-    return blosc2.compress(
-        data,
-        typesize=2,
+    compressed_bytes = blosc2.pack_array(
+        arr,
         clevel=9,
         filter=blosc2.Filter.BITSHUFFLE,
         codec=blosc2.Codec.ZSTD,
     )
+    return compressed_bytes
 
-def decompress_prediction(compressed_bytes: bytes, shape: torch.Size) -> torch.Tensor:
+def decompress_prediction(compressed_prediction: bytes) -> torch.Tensor:
     """Converts compressed bytes back to a torch tensor with the correct shape."""
     try:
-        raw_buffer = blosc2.decompress(compressed_bytes) # Decompresses the bytes back into the original raw binary buffer.
-        return torch.from_numpy(
-            np.frombuffer(raw_buffer, dtype=np.float16).copy()
-        ).reshape(shape)
+        compressed_bytes = compressed_prediction
+        array = blosc2.unpack_array(compressed_bytes) # Decompresses the bytes back into the original raw binary buffer.
+        return torch.from_numpy(array)
     except Exception as e:
         logging.error(f"Error decompressing prediction: {e}")
-        return None
-
-def decode_base64_to_compressed(b64_str: str) -> bytes:
-    """Decodes the synapse string (b64) into compressed bytes."""
-    try:
-        return base64.b64decode(b64_str)
-    except Exception as e:
-        logging.error(f"Error decoding base64 to compressed bytes: {e}")
         return None

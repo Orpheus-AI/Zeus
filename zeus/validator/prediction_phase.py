@@ -13,8 +13,7 @@ import xarray as xr
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.data.sample import Era5Sample
 from zeus.protocol import TimePredictionSynapse
-from zeus.utils.compression import decompress_prediction
-from zeus.utils.time import to_timestamp
+from zeus.base.dendrite import RequestSettings
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (
     _build_bad_miners_data,
@@ -22,7 +21,6 @@ from zeus.validator.responses_processing import (
     create_compressed_predictions,
 )
 from zeus.validator.reward import calculate_rmses, complete_challenge
-from zeus.validator.storage import save_best_miner_prediction
 
 def filter_eligible_miners_for_scoring(
     validator: BaseValidatorNeuron,
@@ -64,13 +62,12 @@ def filter_eligible_miners_for_scoring(
     return miners_uids, miners_hashes, miners_is_good, miners_hotkeys
 
 
-
-def _get_prediction_dendrite(self, sample: Era5Sample):
+def _get_prediction_settings(self, sample: Era5Sample) -> RequestSettings:
     """Resolve the correct prediction ZeusDendrite for a given sample's time window."""
     spec = self.challenge_registry.get(sample.state_key)
     if spec is None:
         raise ValueError(f"No ChallengeSpec for state_key={sample.state_key}")
-    return self.prediction_dendrites[spec.prediction_dendrite_settings]
+    return spec.request_settings
 
 
 async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_list: List[str], axons_to_query: List[bt.Axon]) -> List[Optional[bytes]]:
@@ -79,20 +76,19 @@ async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_l
     once the function returns to run_single_hash_challenge.
     """
 
-    dendrite = _get_prediction_dendrite(self, sample)
+    settings = _get_prediction_settings(self, sample)
     start_time = time.time()
-    responses: List[TimePredictionSynapse] = await dendrite(
+    responses: List[TimePredictionSynapse] = await self.dendrite(
         axons=axons_to_query,
         synapse=sample.build_synapse(TimePredictionSynapse),
         deserialize=False,
-        timeout=self.config.neuron.prediction_timeout,
+        settings=settings,
     )
     end_time = time.time()
     bt.logging.success(f"[fetch_predictions_and_verify_hashes] Received {len(responses)} responses in {end_time - start_time} seconds")
 
 
     compressed_predictions = create_compressed_predictions(responses)
- 
     compressed_predictions = _verify_hashes(axons_to_query, compressed_predictions, hashes_list)
     return compressed_predictions
 

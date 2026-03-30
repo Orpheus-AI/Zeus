@@ -145,19 +145,6 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.hash_timeout",
-        type=float,
-        help="The timeout for each forward call in hash phase in seconds.",
-        default=15,
-    )
-    parser.add_argument(
-        "--neuron.prediction_timeout",
-        type=float,
-        help="The timeout for each forward call in prediction phase in seconds.",
-        default=52,
-    )
-
-    parser.add_argument(
         "--neuron.num_concurrent_forwards",
         type=int,
         help="The number of concurrent forwards running at any time.",
@@ -221,10 +208,6 @@ def add_validator_args(cls, parser):
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
         default=4096,
-    )
-
-    parser.add_argument(
-        "--proxy.port", type=int, help="The port to run the proxy on.", default=10913
     )
 
 

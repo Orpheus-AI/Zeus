@@ -19,7 +19,6 @@
 import argparse
 import asyncio
 import copy
-import json
 import os
 import sys
 import threading
@@ -31,7 +30,7 @@ import bittensor as bt
 import numpy as np
 import pandas as pd
 
-from zeus.base.dendrite import DendriteSettings, ZeusDendrite
+from zeus.base.dendrite import ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
@@ -42,7 +41,6 @@ from zeus.utils.results_state import ResultsState, load_state, save_state
 from zeus.utils.uids import check_uid_availability
 from zeus.validator.constants import (
     CHALLENGE_REGISTRY,
-    HASH_DENDRITE_SETTINGS,
     RANK_HISTORY_PRUNE_LEN,
 )
 from zeus.validator.challenge_spec import ChallengeSpec
@@ -97,21 +95,15 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
         self.challenges = []
 
-        # Hash dendrite (single, shared across all challenges)
-        self.dendrite_hash = ZeusDendrite(
+        # Single shared dendrite
+        self.dendrite = ZeusDendrite(
             wallet=self.wallet,
-            settings=HASH_DENDRITE_SETTINGS,
         )
 
         # Prediction dendrites: one per unique DendriteSettings across all challenge windows
-        unique_settings = {spec.prediction_dendrite_settings for spec in CHALLENGE_REGISTRY.values()}
-        self.prediction_dendrites: Dict[DendriteSettings, ZeusDendrite] = {
-            settings: ZeusDendrite(wallet=self.wallet, settings=settings)
-            for settings in unique_settings
-        }
+        unique_settings = {spec.request_settings for spec in CHALLENGE_REGISTRY.values()}
         bt.logging.info(
-            "Dendrites: hash=%s, prediction=%d unique settings",
-            self.dendrite_hash, len(self.prediction_dendrites),
+            f"Dendrite: hash={self.dendrite}, prediction={len(unique_settings)} unique settings"
         )
 
         self.challenge_registry = CHALLENGE_REGISTRY

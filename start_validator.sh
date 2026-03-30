@@ -15,7 +15,7 @@ if [ -z "$CDS_API_KEY" ]; then
   exit 1
 fi
 
-VALIDATOR_PROCESS_NAME="zeus_validator"
+VALIDATOR_PROCESS_NAME="zeus_validator_v2.3"
 
 if pm2 list | grep -q "$VALIDATOR_PROCESS_NAME"; then
   echo "Process '$VALIDATOR_PROCESS_NAME' is already running. Deleting it..."
@@ -30,8 +30,7 @@ pm2 start neurons/validator.py --name $VALIDATOR_PROCESS_NAME -- \
   --wallet.name $WALLET_NAME \
   --wallet.hotkey $WALLET_HOTKEY \
   --axon.port $AXON_PORT \
-  --proxy.port $PROXY_PORT \
-  --logging.info
+  --logging.debug
 
 # synchronise the process list with the pm2 ecosystem file
 pm2 save
