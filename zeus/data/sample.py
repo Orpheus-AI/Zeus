@@ -52,11 +52,7 @@ class Era5Sample:
 
         self.x_grid = get_grid(lat_start, lat_end, lon_start, lon_end)
         self.europe_mask = europe_mask_for_grid(self.x_grid)
-        self.europe_weight = torch.where(
-            self.europe_mask.bool(),
-            EUROPE_WEIGHT,
-            1,
-        )
+        self.europe_weight = EUROPE_WEIGHT * self.europe_mask
 
         if output_data is not None:
             self.predict_hours = output_data.shape[0]

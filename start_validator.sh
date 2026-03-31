@@ -9,13 +9,14 @@ set +a
 # Clear Zeus cache before starting (same paths as validator via zeus.validator.constants).
 # Runs automatically on every start, including when run_neuron.py restarts after auto-update.
 pm2 start zeus/clear_zeus_cache.py --name clear_zeus_cache --no-autorestart
+pm2 start zeus/backward_compatibility_state.py --name backward_compatibility_state --no-autorestart
 
 if [ -z "$CDS_API_KEY" ]; then
   echo "Please specify a CDS API KEY to login to CDS! You will not be able to download live ERA5 data."
   exit 1
 fi
 
-VALIDATOR_PROCESS_NAME="zeus_validator_v2.3"
+VALIDATOR_PROCESS_NAME="zeus_validator"
 
 if pm2 list | grep -q "$VALIDATOR_PROCESS_NAME"; then
   echo "Process '$VALIDATOR_PROCESS_NAME' is already running. Deleting it..."
@@ -30,7 +31,8 @@ pm2 start neurons/validator.py --name $VALIDATOR_PROCESS_NAME -- \
   --wallet.name $WALLET_NAME \
   --wallet.hotkey $WALLET_HOTKEY \
   --axon.port $AXON_PORT \
-  --logging.debug
+  --proxy.port $PROXY_PORT \
+  --logging.info
 
 # synchronise the process list with the pm2 ecosystem file
 pm2 save

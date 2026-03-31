@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from functools import partial
 import time
 import asyncio
 import threading
@@ -24,7 +23,6 @@ import traceback
 
 import bittensor as bt
 
-from zeus.protocol import patch_synapse_response
 from zeus.base.neuron import BaseNeuron
 from zeus.utils.config import add_miner_args
 
@@ -60,9 +58,7 @@ class BaseMinerNeuron(BaseNeuron):
             wallet=self.wallet,
             config=self.config() if callable(self.config) else self.config,
         )
-        # allow for bytes as body
-        patch_synapse_response(self.axon.middleware_cls)
-        
+
         bt.logging.info(f"Axon created: {self.axon}")
 
         # Instantiate runners

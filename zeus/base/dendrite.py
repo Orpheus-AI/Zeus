@@ -6,20 +6,18 @@ import asyncio
 import json
 import aiohttp
 import bittensor as bt
-from zeus.protocol import PredictionSynapse
 
 @dataclass(frozen=True)
-class RequestSettings:
-    """Settings per dendrite/synapse type (hash vs prediction)."""
+class DendriteSettings:
+    """Settings per dendrite/synapse type (hash vs prediction).
+
+    forward_timeout is the HTTP timeout in seconds for each forward call for that profile.
+    """
     forward_concurrency: int
     response_batch_k: int
     attempts_per_miner: int
     max_response_body_bytes: int
-    total_timeout: float
-    connection_timeout: float = 3.0
-    # packets are 1.5KB internally, so sending one every 10 seconds is required
-    next_packet_timeout: float = 10.0
-    
+    forward_timeout: float
 
 
 class ZeusDendrite(bt.Dendrite):
@@ -36,9 +34,11 @@ class ZeusDendrite(bt.Dendrite):
     def __init__(
         self,
         *args,
+        settings: DendriteSettings,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self._settings = settings
         connector = aiohttp.TCPConnector(
             limit=260,
             verify_ssl=False,
@@ -46,15 +46,16 @@ class ZeusDendrite(bt.Dendrite):
             limit_per_host=125,
         )
         self._session = aiohttp.ClientSession(connector=connector)
+        self.semaphore = asyncio.Semaphore(settings.forward_concurrency)
 
     async def forward(
         self,
         axons: Union[list[Union[bt.AxonInfo, bt.Axon]], Union[bt.AxonInfo, bt.Axon]],
-        synapse: PredictionSynapse,
-        settings: RequestSettings,
+        synapse: bt.Synapse = bt.Synapse(),
+        timeout: float = 12,
         deserialize: bool = True,
         run_async: bool = True,
-    ) -> list[Union[AsyncGenerator[Any, Any], PredictionSynapse, bt.StreamingSynapse]]:
+    ) -> list[Union[AsyncGenerator[Any, Any], bt.Synapse, bt.StreamingSynapse]]:
         """
         Modified forward call to decompose request creation and sending,
         So that request timing is only applied to the later part.
@@ -66,7 +67,7 @@ class ZeusDendrite(bt.Dendrite):
             is_list = False
             axons = [axons]
 
-        async def query_all_axons() -> Union[AsyncGenerator[Any, Any], PredictionSynapse]:
+        async def query_all_axons() -> Union[AsyncGenerator[Any, Any], bt.Synapse]:
             """
             Decompose calling into two steps. Can be run sync or async,
             as per the parent class.
@@ -85,7 +86,7 @@ class ZeusDendrite(bt.Dendrite):
                     self.prepare_call(
                         target_axon=target_axon,
                         synapse=synapse.model_copy(),
-                        settings=settings,
+                        timeout=timeout, 
                     ) 
                     for target_axon in axons
                 ]
@@ -98,7 +99,6 @@ class ZeusDendrite(bt.Dendrite):
                         post_args=post_args, 
                         synapse=prepared_synapse, 
                         target_axon=target_axon, # Pass the axon info down
-                        settings=settings,
                         deserialize=deserialize
                     ) 
                     for (prepared_synapse, post_args, target_axon) in calls
@@ -113,9 +113,9 @@ class ZeusDendrite(bt.Dendrite):
     async def prepare_call(
         self,
         target_axon: Union[bt.AxonInfo, bt.Axon],
-        synapse: PredictionSynapse,
-        settings: RequestSettings,
-    ) -> Tuple[PredictionSynapse, Dict[str, Any], Union[bt.AxonInfo,bt.Axon]]:
+        timeout: float = 12.0,
+        synapse: bt.Synapse = bt.Synapse(),
+    ) -> Tuple[bt.Synapse, Dict[str, Any], Union[bt.AxonInfo,bt.Axon]]:
         """
         First half of default BitTensor dendrite.call function.
         Modifies the synapse in place, and returns all precomputed arguments for post request
@@ -137,23 +137,15 @@ class ZeusDendrite(bt.Dendrite):
         # precompute the arguments to the call
         return (
             synapse, 
-            {"url": url, 
-            "timeout": 
-                aiohttp.ClientTimeout(
-                    sock_connect=settings.connection_timeout,
-                    sock_read=settings.next_packet_timeout, 
-                    total=settings.total_timeout
-                )
-            },
+            {"url": url, "timeout": aiohttp.ClientTimeout(total=timeout), "timeout_float": timeout},
             target_axon
         )
 
     async def call(
         self,
         post_args: Dict[str, Any],
-        synapse: PredictionSynapse,
+        synapse: bt.Synapse,
         target_axon: bt.AxonInfo, # New argument
-        settings: RequestSettings,
         deserialize: bool = True,
     ) -> bt.Synapse:
         """
@@ -163,8 +155,10 @@ class ZeusDendrite(bt.Dendrite):
         Returns:
         - Synapse or deserialisation result
         """
-        async with asyncio.Semaphore(settings.forward_concurrency):
-            synapse = self.preprocess_synapse_for_request(target_axon, synapse, settings.total_timeout)
+        max_body_bytes = self._settings.max_response_body_bytes
+        async with self.semaphore:
+            timeout_float = post_args.pop("timeout_float")
+            synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout_float)
             
             # Update headers and body with the fresh signature
             post_args["headers"] = synapse.to_headers()
@@ -185,17 +179,15 @@ class ZeusDendrite(bt.Dendrite):
                     # We iterate over the stream manually to ensure we never over-allocate
                     async for chunk in response.content.iter_chunked(64 * 1024): # chunks
                         bytes_read += len(chunk)
-                        if bytes_read > settings.max_response_body_bytes:
+                        if bytes_read > max_body_bytes:
                             # Close the connection immediately to stop the flow
                             response.close() 
-                            raise ValueError(f"Miner sent too much data (Byte Limit Exceeded) bytes_read: {bytes_read} max_body_bytes: {settings.max_response_body_bytes}")
+                            raise ValueError(f"Miner sent too much data (Byte Limit Exceeded) bytes_read: {bytes_read} axon: {target_axon} max_body_bytes: {max_body_bytes} for dendrite: {self._settings}")
                         chunks.append(chunk)
 
                     body = b"".join(chunks)
-                    if (field_name:= synapse.get_byte_field_name()):
-                        json_response = {field_name: body}
-                    else:
-                        json_response = json.loads(body)
+                    json_response = json.loads(body)
+                    bt.logging.warning(f"read bytes {bytes_read}")
 
                     self.process_server_response(response, json_response, synapse)
 

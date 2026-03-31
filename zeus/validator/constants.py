@@ -1,9 +1,7 @@
 from pathlib import Path
-from enum import StrEnum, auto
 from typing import Dict, List, Tuple
 
-from zeus.base.dendrite import RequestSettings
-from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpec
+from zeus.base.dendrite import DendriteSettings
 
 # ------------------------------------------------------
 # ------------------ General Constants -----------------
@@ -14,42 +12,32 @@ MAINNET_UID = 18
 FORWARD_DELAY_SECONDS = 90
 
 
-class ForecastType(StrEnum):
-    SHORT_TERM = auto()
-    MEDIUM_TERM = auto()
-
-
 # Hash phase: high concurrency, batch size, retries
-HASH_DENDRITE_SETTINGS = RequestSettings(
+HASH_DENDRITE_SETTINGS = DendriteSettings(
     forward_concurrency=125,
     response_batch_k=125,
     attempts_per_miner=3,
     max_response_body_bytes=1024 * 1024 * 10,
-    total_timeout=15,
+    forward_timeout=13.0,
 )
-
+SHORT_CHALLENGE = (0, 48)
+LONG_CHALLENGE = (0, 24 * 15)
 # Per-window prediction dendrite settings keyed by (start_offset, end_offset)
-WINDOW_SETTINGS: dict[ForecastType, tuple[tuple[int, int], RequestSettings]] = {
-    ForecastType.SHORT_TERM: (
-        (0, 48),
-        RequestSettings(
-            forward_concurrency=18,
-            response_batch_k=36,
-            attempts_per_miner=2,
-            max_response_body_bytes=1024 * 1024 * 100,
-            total_timeout=60,
-        )
+PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
+    SHORT_CHALLENGE: DendriteSettings(
+        forward_concurrency=13,
+        response_batch_k=26,
+        attempts_per_miner=2,
+        max_response_body_bytes=1024 * 1024 * 140,
+        forward_timeout=26,
     ),
-    ForecastType.MEDIUM_TERM: (
-        (0, 24 * 15),
-        RequestSettings(
-            forward_concurrency=3,
-            response_batch_k=3,
-            attempts_per_miner=2,
-            max_response_body_bytes=1024 * 1024 * 780,
-            total_timeout=60,
-        ),
-    )
+    LONG_CHALLENGE: DendriteSettings(
+        forward_concurrency=2,
+        response_batch_k=2,
+        attempts_per_miner=2,
+        max_response_body_bytes=1024 * 1024 * 780,
+        forward_timeout=52.0,
+    ),
 }
 
 # after how many percent of above it yields results
@@ -92,12 +80,17 @@ COPERNICUS_ERA5_URL: str = "https://cds.climate.copernicus.eu/api"
 DEFAULT_STEP_SIZE: int = 1  # hours between prediction time steps (synapse default)
 MIN_HOURS_BETWEEN_REQUESTS = 5
 
+TIME_WINDOWS_PER_CHALLENGE: List[Tuple[int, int]] = [SHORT_CHALLENGE, LONG_CHALLENGE]
+
 PERCENTAGE_GOING_TO_WINNER = 0.95
 
 PERFORMANCE_DATABASE_URL = "https://testnet.zeussubnet.com"
 
 # ---- Challenge registry (variable × time-window, each with its own state_key) ----
+from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpec  # noqa: E402
+
 CHALLENGE_REGISTRY: Dict[str, ChallengeSpec] = build_challenge_registry(
     era5_data_vars=ERA5_DATA_VARS,
-    window_settings=WINDOW_SETTINGS,
+    time_windows=TIME_WINDOWS_PER_CHALLENGE,
+    prediction_settings_per_window=PREDICTION_SETTINGS_PER_WINDOW,
 )

@@ -19,6 +19,7 @@
 import argparse
 import asyncio
 import copy
+import json
 import os
 import sys
 import threading
@@ -28,9 +29,8 @@ from typing import Dict, List, Set, Union
 
 import bittensor as bt
 import numpy as np
-import pandas as pd
 
-from zeus.base.dendrite import ZeusDendrite
+from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
@@ -38,10 +38,12 @@ from zeus.base.utils.weight_utils import (
 )
 from zeus.utils.config import add_validator_args
 from zeus.utils.results_state import ResultsState, load_state, save_state
-from zeus.utils.uids import check_uid_availability
+from zeus.utils.uids import check_uid_availability, is_registered_after_release_zeus_v2 as is_after_zeus_v2_cutoff
 from zeus.validator.constants import (
     CHALLENGE_REGISTRY,
+    HASH_DENDRITE_SETTINGS,
     RANK_HISTORY_PRUNE_LEN,
+    SHORT_CHALLENGE,
 )
 from zeus.validator.challenge_spec import ChallengeSpec
 from zeus.validator.reward import compute_min_rank_weights
@@ -95,15 +97,21 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
         self.challenges = []
 
-        # Single shared dendrite
-        self.dendrite = ZeusDendrite(
+        # Hash dendrite (single, shared across all challenges)
+        self.dendrite_hash = ZeusDendrite(
             wallet=self.wallet,
+            settings=HASH_DENDRITE_SETTINGS,
         )
 
         # Prediction dendrites: one per unique DendriteSettings across all challenge windows
-        unique_settings = {spec.request_settings for spec in CHALLENGE_REGISTRY.values()}
+        unique_settings = {spec.prediction_dendrite_settings for spec in CHALLENGE_REGISTRY.values()}
+        self.prediction_dendrites: Dict[DendriteSettings, ZeusDendrite] = {
+            settings: ZeusDendrite(wallet=self.wallet, settings=settings)
+            for settings in unique_settings
+        }
         bt.logging.info(
-            f"Dendrite: hash={self.dendrite}, prediction={len(unique_settings)} unique settings"
+            "Dendrites: hash=%s, prediction=%d unique settings",
+            self.dendrite_hash, len(self.prediction_dendrites),
         )
 
         self.challenge_registry = CHALLENGE_REGISTRY
@@ -315,7 +323,11 @@ class BaseValidatorNeuron(BaseNeuron):
                 )
 
                 max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)
-                window_size = min(self.config.neuron.score_time_window, max_len)
+                
+                if (spec.start_offset, spec.end_offset) == SHORT_CHALLENGE:
+                    window_size = min(self.config.neuron.score_time_window_short, max_len)
+                else:
+                    window_size = min(self.config.neuron.score_time_window_long, max_len)
 
                 weights, miners_metadata = compute_min_rank_weights(
                     metagraph_size=self.metagraph.n,
@@ -447,20 +459,7 @@ class BaseValidatorNeuron(BaseNeuron):
         reg_block = self.metagraph.block_at_registration[uid]
         current_block = self.subtensor.block
 
-        # Calculate estimated time elapsed (assuming ~12 seconds per block)
-        blocks_elapsed = current_block - reg_block
-        seconds_elapsed = blocks_elapsed * 12
-        
-        # Estimate the exact datetime of registration relative to now
-        estimated_reg_date = pd.Timestamp.now("UTC") - pd.Timedelta(seconds=seconds_elapsed)
-        
-        # Define our cutoff date: March 17, 2026 at 15:00
-        cutoff_date = pd.Timestamp('2026-03-17 18:00:00', tz='UTC')
-
-        # bt.logging.debug(f"[is_registered_after_zeus_v2] UID {uid} estimated registration: {estimated_reg_date.strftime('%d.%m.%Y %H:%M:%S')}")
-
-        # Return True if registered on/after cutoff, False if before
-        return estimated_reg_date >= cutoff_date
+        return is_after_zeus_v2_cutoff(reg_block, current_block)
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""

@@ -114,6 +114,8 @@ class Era5CDSLoader(Era5BaseLoader):
         base_start = (pd.Timestamp.now('UTC').floor('6h')).replace(tzinfo=None)
         step_size = self.step_size
 
+        
+
         for variable in self.data_vars:
             for start_h, end_h in TIME_WINDOWS_PER_CHALLENGE:
                 chunk_start = base_start + pd.Timedelta(hours=start_h)

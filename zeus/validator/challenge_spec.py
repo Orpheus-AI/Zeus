@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from zeus.base.dendrite import RequestSettings
-from zeus.validator.constants import ForecastType
+from zeus.base.dendrite import DendriteSettings
 
 
 def make_state_key(variable: str, start_offset: int, end_offset: int) -> str:
@@ -15,7 +14,7 @@ class ChallengeSpec:
     start_offset: int
     end_offset: int
     weight: float
-    request_settings: RequestSettings
+    prediction_dendrite_settings: DendriteSettings
 
     @property
     def state_key(self) -> str:
@@ -24,24 +23,26 @@ class ChallengeSpec:
 
 def build_challenge_registry(
     era5_data_vars: Dict[str, float],
-    window_settings: Dict[ForecastType, Tuple[Tuple[int, int], RequestSettings]],
+    time_windows: list[Tuple[int, int]],
+    prediction_settings_per_window: Dict[Tuple[int, int], DendriteSettings],
 ) -> Dict[str, ChallengeSpec]:
     """Build {state_key: ChallengeSpec} from ERA5 variables × time windows.
 
     Each variable's total weight is split equally across its windows.
     prediction_settings_per_window maps (start_offset, end_offset) -> DendriteSettings.
     """
-    n_windows = len(window_settings)
+    n_windows = len(time_windows)
     registry: Dict[str, ChallengeSpec] = {}
     for variable, total_weight in era5_data_vars.items():
         per_window_weight = total_weight / n_windows
-        for (start_offset, end_offset), settings in window_settings:
+        for start_offset, end_offset in time_windows:
+            settings = prediction_settings_per_window[(start_offset, end_offset)]
             spec = ChallengeSpec(
                 variable=variable,
                 start_offset=start_offset,
                 end_offset=end_offset,
                 weight=per_window_weight,
-                request_settings=settings,
+                prediction_dendrite_settings=settings,
             )
             registry[spec.state_key] = spec
     return registry

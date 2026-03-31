@@ -180,9 +180,16 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.score_time_window",
+        "--neuron.score_time_window_short",
         type=int,
-        help="Number of recent rank samples to average when computing weights. Miners with fewer than n samples get weight 0.",
+        help="Number of recent rank samples to average when computing weights of short forecast challenges. Miners with fewer than n samples get weight 0.",
+        default=4,
+    )
+
+    parser.add_argument(
+        "--neuron.score_time_window_long",
+        type=int,
+        help="Number of recent rank samples to average when computing weights of long forecast challenges. Miners with fewer than n samples get weight 0.",
         default=8,
     )
 
@@ -208,6 +215,10 @@ def add_validator_args(cls, parser):
         type=int,
         help="The maximum number of TAO allowed to query a validator with a vpermit.",
         default=4096,
+    )
+
+    parser.add_argument(
+        "--proxy.port", type=int, help="The port to run the proxy on.", default=10913
     )
 
 

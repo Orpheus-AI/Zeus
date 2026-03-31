@@ -18,16 +18,13 @@
 # DEALINGS IN THE SOFTWARE.
 
 from abc import ABC
-from typing import Optional, Callable, Type, get_args
+from typing import Optional
 
-from starlette.responses import Response
 import bittensor as bt
-from bittensor.core.axon import AxonMiddleware
 import torch
 from pydantic import Field
 
-from zeus.validator.constants import ForecastType
-from zeus.utils.compression import decompress_prediction
+from zeus.utils.compression import decode_base64_to_compressed, decompress_prediction
 
 
 class PredictionSynapse(bt.Synapse, ABC):
@@ -36,20 +33,6 @@ class PredictionSynapse(bt.Synapse, ABC):
     This protocol helps in handling request and response communication between
     the miner and the validator.
     """
-
-    def get_byte_field_name(self) -> Optional[str]:
-        """Get name of field marked as bytes, ensures at most one can exist"""
-        byte_fields = [
-            name 
-            for name, field in self.model_fields.items() 
-            if field.annotation is bytes or bytes in get_args(field.annotation)
-        ]
-        assert len(byte_fields) <= 1, "Cannot dump more than one byte field!"
-        return byte_fields[0] if byte_fields else None
-
-    def get_body(self) -> Optional[bytes]:
-        """Allows for getting raw bytes request body if it has a byte field"""
-        return getattr(self, self.get_byte_field_name() or '', None)
 
     version: str = Field(
         title="Validator/Miner codebase version",
@@ -120,13 +103,6 @@ class PredictionSynapse(bt.Synapse, ABC):
         frozen=True,
     )
 
-    @property
-    def forecase_type(self) -> ForecastType:
-        """Get forecase type (short or medium)"""
-        if self.requested_hours == 49:
-            return ForecastType.SHORT_TERM
-        return ForecastType.MEDIUM_TERM
-
 class TimePredictionSynapse(PredictionSynapse):
     """
     Used for recent/future prediction. Class name is frozen to maintain cross version compatibility
@@ -141,7 +117,7 @@ class TimePredictionSynapse(PredictionSynapse):
     # )
     # Response output: miners must set this. Base64-encoded payload (blosc2-compressed float32).
     # Use str so JSON/transport does not try to decode binary as UTF-8.
-    predictions: Optional[bytes] = Field(
+    predictions: Optional[str] = Field(
         title="Prediction (blosc2)",
         description="Base64-encoded blosc2-compressed float32. deserialize(expected_shape=...) decodes to tensor (time, lat, lon).",
         default=None,
@@ -157,7 +133,10 @@ class TimePredictionSynapse(PredictionSynapse):
         if not self.predictions:
             return torch.tensor([])
         try:
-            return decompress_prediction(self.predictions, tuple(expected_shape))
+            
+            raw = decode_base64_to_compressed(self.predictions)
+            if expected_shape is not None:
+                return decompress_prediction(raw, tuple(expected_shape))
        
         except Exception:
             return torch.tensor([])
@@ -177,21 +156,3 @@ class HashedTimePredictionSynapse(PredictionSynapse):
         default=None,
         frozen=False,
     )
-
-
-def patch_synapse_response(middleware_cls: Type[AxonMiddleware]) -> Response:
-
-    original_function = middleware_cls.synapse_to_response.__func__
-
-    @classmethod
-    async def wrapper(cls, synapse: PredictionSynapse, start_time: float, response_override: Optional[Response]=None):
-        response_override = Response(
-            content=synapse.get_body()
-        )
-        return await original_function(cls, synapse, start_time, response_override=response_override)
-
-    
-    middleware_cls.synapse_to_response = wrapper
-       
-
-        

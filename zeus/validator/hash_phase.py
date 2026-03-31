@@ -94,11 +94,11 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
         axons_to_query = [self.metagraph.axons[uid] for uid in miner_uids]
 
         start_time = time.time()
-        responses = await self.dendrite(
+        responses = await self.dendrite_hash(
             axons=axons_to_query,
             synapse=sample.build_synapse(HashedTimePredictionSynapse),
-            settings=HASH_DENDRITE_SETTINGS,
             deserialize=False,
+            timeout=HASH_DENDRITE_SETTINGS.forward_timeout,
         )
         end_time = time.time()
         bt.logging.warning(f"Time taken to query hashes: {end_time - start_time} seconds")
