@@ -96,7 +96,9 @@ async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_l
 
 
     compressed_predictions = create_compressed_predictions(responses)
- 
+
+    del responses
+
     compressed_predictions = _verify_hashes(axons_to_query, compressed_predictions, hashes_list)
     return compressed_predictions
 
@@ -316,18 +318,20 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
        
         hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_hotkeys_to_query, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
 
+
         def _save_and_free(miner_uids, axons_to_query, compressed_predictions):
-            batch = [
-                MinerData(uid=uid, hotkey=axon.hotkey, prediction=pred)
-                for uid, axon, pred in zip(miner_uids, axons_to_query, compressed_predictions)
-                if pred is not None
-            ]
-            for miner in batch:
-                try:
-                    save_best_miner_prediction(self, sample, miner, query_random_miners, best_10_hotkeys)
-                except Exception as e:
-                    bt.logging.warning(f"[run_initial_prediction_top_k_phases] {miner.hotkey} {miner.uid} Error saving prediction: {e}")
-                miner.prediction = None
+            batch = []
+            for i, (uid, axon, pred) in enumerate(zip(miner_uids, axons_to_query, compressed_predictions)):
+                compressed_predictions[i] = None  # Free the heavy compressed string list reference immediately
+                if pred is not None:
+                    miner = MinerData(uid=uid, hotkey=axon.hotkey, prediction=pred)
+                    # try:
+                    #     save_best_miner_prediction(self, sample, miner, query_random_miners, best_10_hotkeys)
+                    # except Exception as e:
+                    #     bt.logging.warning(f"[run_initial_prediction_top_k_phases] {miner.hotkey} {miner.uid} Error saving prediction: {e}")
+                    miner.prediction = None  # Free prediction before moving to the next one
+                    batch.append(miner)
+                    del pred
             return batch
 
         good_miners_data, bad_miners_data = await run_prediction_phase(

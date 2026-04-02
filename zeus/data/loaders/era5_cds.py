@@ -161,7 +161,10 @@ class Era5CDSLoader(Era5BaseLoader):
             return None
         result = data4d[..., 2:].squeeze(dim=-1)
         variable_converter = get_converter(sample.variable)
-        return variable_converter.era5_to_target(result)
+        # ! First convert to desired unit then convert to float16 to save memory
+        out = variable_converter.era5_to_target(result)
+        out = out.to(torch.float16)
+        return out
 
     def get_file_name(self, variable: str, timestamp: pd.Timestamp) -> str:
         return os.path.join(self.cache_dir, variable, f"era5_{timestamp.strftime('%Y-%m-%d')}.nc")

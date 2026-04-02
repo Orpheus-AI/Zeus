@@ -16,7 +16,7 @@ FORWARD_DELAY_SECONDS = 90
 HASH_DENDRITE_SETTINGS = DendriteSettings(
     forward_concurrency=125,
     response_batch_k=125,
-    attempts_per_miner=3,
+    attempts_per_miner=2,
     max_response_body_bytes=1024 * 1024 * 10,
     forward_timeout=13.0,
 )
@@ -36,7 +36,7 @@ PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
         response_batch_k=2,
         attempts_per_miner=2,
         max_response_body_bytes=1024 * 1024 * 780,
-        forward_timeout=52.0,
+        forward_timeout=55.0,
     ),
 }
 

@@ -82,9 +82,11 @@ WALLET_HOTKEY=default
 
 # Validator Port Setting:
 AXON_PORT=
+PROXY_PORT=
 
 # API Keys:
 CDS_API_KEY=                    # https://github.com/Orpheus-AI/Zeus/blob/main/docs/Validating.md#ecmwf
+PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourself
 
 # Optional integrations
 DISCORD_WEBHOOK=                # https://www.svix.com/resources/guides/how-to-make-webhook-discord/

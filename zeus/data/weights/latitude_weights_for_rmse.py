@@ -61,7 +61,7 @@ def calculate_weights():
     print(latitudes[0], latitudes[-1])
     weights = np.cos(np.deg2rad(latitudes)) * np.sin(np.deg2rad(delta_latitude/2))
     weights[[0, -1]] = np.sin(np.deg2rad(delta_latitude/4)) ** 2
-    weights = weights / weights.mean()
+    #weights = weights / weights.mean()
     print(f'Weights shape {weights.shape}')
     np.save('zeus/data/weights/latitude_weights_for_rmse.npy', weights)
 

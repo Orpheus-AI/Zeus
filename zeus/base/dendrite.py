@@ -186,7 +186,9 @@ class ZeusDendrite(bt.Dendrite):
                         chunks.append(chunk)
 
                     body = b"".join(chunks)
+                    del chunks
                     json_response = json.loads(body)
+                    del body
                     bt.logging.warning(f"read bytes {bytes_read}")
 
                     self.process_server_response(response, json_response, synapse)

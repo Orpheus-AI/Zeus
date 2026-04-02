@@ -118,8 +118,11 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
- 
-        self.state_path = os.path.join(self.config.neuron.full_path, "state_v3.json")
+        old_state_path = os.path.join(self.config.neuron.full_path, "state_v2.json")
+        new_state_path = os.path.join(self.config.neuron.full_path, "state_v3.json")
+        self.migrate_state(old_state_path, new_state_path)
+        self.state_path = new_state_path
+        
         self.state_per_challenge, loaded_step = load_state(
             self.state_path
         )
@@ -139,6 +142,43 @@ class BaseValidatorNeuron(BaseNeuron):
             self.serve_axon()
         else:
             bt.logging.warning("axon off, not serving ip to chain.")
+    
+    def migrate_state(self, v2_path, v3_path):
+        if os.path.exists(v3_path):
+            bt.logging.info(
+                f"Skip migration: {v3_path} already exists "
+                f"(remove it first if you need to re-run v2 → v3 from {v2_path})."
+            )
+            return
+
+        bt.logging.info(f"Looking for v2 state at: {v2_path}")
+        
+        if not os.path.exists(v2_path):
+            bt.logging.error(f"Error: File {v2_path} does not exist.")
+            return
+
+        try:
+            with open(v2_path, "r") as f:
+                v2_data = json.load(f)
+        except json.JSONDecodeError as e:
+            bt.logging.error(f"Error: Could not parse {v2_path} as JSON: {e}")
+            return
+
+        step = v2_data.get("step")
+        v2_variables = v2_data.get("variables", {})
+
+        v3_variables: Dict[str, ResultsState] = {}
+
+        for var_name, old_content in v2_variables.items():
+            state_key = f"{var_name}@0_48"
+            v3_variables[state_key] = ResultsState(
+                name=state_key,
+                rank_history=old_content.get("rank_history", {}).copy(),
+                best_10_miners=old_content.get("best_10_miners", []).copy(),
+            )
+        
+        save_state(v3_path, v3_variables, step)
+        bt.logging.info(f"Successfully migrated {v2_path} to {v3_path}")
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
