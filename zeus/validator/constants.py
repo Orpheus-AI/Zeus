@@ -84,7 +84,7 @@ TIME_WINDOWS_PER_CHALLENGE: List[Tuple[int, int]] = [SHORT_CHALLENGE, LONG_CHALL
 
 PERCENTAGE_GOING_TO_WINNER = 0.95
 
-PERFORMANCE_DATABASE_URL = "https://testnet.zeussubnet.com"
+PERFORMANCE_DATABASE_URL = "https://performance.zeussubnet.com"
 
 # ---- Challenge registry (variable × time-window, each with its own state_key) ----
 from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpec  # noqa: E402
