@@ -9,7 +9,6 @@ set +a
 # Clear Zeus cache before starting (same paths as validator via zeus.validator.constants).
 # Runs automatically on every start, including when run_neuron.py restarts after auto-update.
 pm2 start zeus/clear_zeus_cache.py --name clear_zeus_cache --no-autorestart
-pm2 start zeus/backward_compatibility_state.py --name backward_compatibility_state --no-autorestart
 
 if [ -z "$CDS_API_KEY" ]; then
   echo "Please specify a CDS API KEY to login to CDS! You will not be able to download live ERA5 data."
