@@ -66,12 +66,13 @@ async def forward(self: BaseValidatorNeuron):
         await run_initial_prediction_top_k_phases(self, self.challenges, previous_hotkeys2uids)
 
     # based on the block and the readiness of the database, we decide if we should try to see if any challenges are ready for scoring 
+    need_to_set_weights = False
     if self.database.should_score():
         bt.logging.info("Potentially scoring stored predictions for live ERA5 data.")
         self.resync_metagraph() 
         need_to_set_weights = await self.database.score_and_prune(score_func=partial(run_final_prediction_phase, self))
-        if need_to_set_weights or self.should_set_weights():
-            self.set_weights()
+    if need_to_set_weights or self.should_set_weights():
+        self.set_weights()
 
     time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
         

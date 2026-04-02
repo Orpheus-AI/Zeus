@@ -120,11 +120,13 @@ pm2 start run_neuron.py -- --validator
 
 ### Validator phases (forward pass) 
 
-The validator uses a **commit–reveal** flow so miners cannot copy others’ answers. The logic is in [forward.py](../zeus/validator/forward.py). Each forward pass can run one or more of these phases, depending on the current time and chain state:
+The validator uses a **commit–reveal** flow so miners cannot copy others’ answers. The logic is in [forward.py](../zeus/validator/forward.py). Each forward pass can run one or more of these phases, depending on the current time and chain state.
+
+**Challenges:** Each forward samples one challenge per **ERA5 variable × time window**. There are two windows: **short-term** (49 hourly steps, 0–48 h from the challenge start) and **long-term** (361 steps, 0–360 h / 15 days). Registry and per-window dendrite limits are in [constants.py](../zeus/validator/constants.py) (`TIME_WINDOWS_PER_CHALLENGE`, `PREDICTION_SETTINGS_PER_WINDOW`, `CHALLENGE_REGISTRY`). Weight aggregation uses separate rolling windows for short vs long challenges (`--neuron.score_time_window_short`, `--neuron.score_time_window_long` in [config](../zeus/utils/config.py)).
 
 | Phase | When it runs | What the validator does |
 |-------|----------------|--------------------------|
-| **1. Hash commit** | At 00:00, 06:00, 12:00, 18:00 UTC (every 6 hours, subject to a minimum interval between requests). | Requests **hashes** of predictions from **all** eligible miners for the current challenge(s). The hashing the miners returns needs to be a function of their hotkey and predictions. Records which miners returned hashes. Miners that fail or don’t respond can be recorded as bad. Implemented in `run_all_hash_phases()`. |
+| **1. Hash commit** | At 00:30, 06:30, 12:30, 18:30 UTC (every 6 hours, subject to a minimum interval between requests). | Requests **hashes** of predictions from **all** eligible miners for the current challenge(s). The hashing the miners returns needs to be a function of their hotkey and predictions. Records which miners returned hashes. Miners that fail or don’t respond can be recorded as bad. Implemented in `run_all_hash_phases()`. |
 | **2. Query best (reveal)** | At least one hour after the hash phase, in the same 6‑hour window (when `hour % 6 != 0`). | Queries only a **subset** of miners: those who passed the hash phase and/or are in the historical “top” set. Requests **full predictions** and verifies them against the committed hashes. Miners whose verification fails are marked bad. Implemented in `run_initial_prediction_top_k_phases()`. This step is useful for the proxy. |
 | **3. Scoring** | For challenges whose ground truth is ready, runs the **final prediction phase** | Requests full predictions from miners who committed (if needed), computes RMSE/MAE vs ground truth, calculates the rewards and may call `set_weights()`. Implemented via `database.score_and_prune()` and `run_final_prediction_phase()`. 
 

@@ -102,25 +102,28 @@ conda activate zeus
 The datasource for this subnet consists of ERA5 reanalysis data from the Climate Data Store (CDS) of the European Union's Earth observation programme (Copernicus). This comprises the largest global environmental dataset to date, containing hourly measurements across a multitude of variables. 
 
 **Request Schedule:**
-There are 4 forecast requests per day, sent at 00:00, 06:00, 12:00, and 18:00 UTC. Each request follows a fixed format:
-- **Geographical coverage**: Always the entire Earth (full latitude and longitude range)
-- **Time steps**: Always 49 time steps, covering from the current hour (t=0) to +48 hours (t=48) in 1-hour intervals
-- **Step size**: Always 1 hour between prediction time steps
+There are 4 forecast rounds per day, anchored at 00:30, 06:30, 12:30, and 18:30 UTC. In each round the validator may issue **multiple challenges**: one per combination of **ERA5 variable** and **forecast horizon** (see [constants](../zeus/validator/constants.py)). Geography and step size are the same for all challenges:
 
-Each challenge focuses on a single variable. Currently supported variables include temperature two meters above the earth's surface and wind 100 meters u and v components. For an up-to-date list and their scoring weights, see the [constants](../zeus/validator/constants.py) file.
+- **Geographical coverage**: Always the entire Earth (full latitude and longitude range)
+- **Step size**: Always 1 hour between prediction time steps
+- **Forecast horizons** (identified by `requested_hours`, the length of the time dimension):
+  - **Short-term:** 49 hourly steps from the current hour (t=0) through **+48 hours** (`requested_hours == 49`).
+  - **Long-term:** 361 hourly steps from the current hour through **+360 hours** (15 days, `requested_hours == 361`).
+
+Each challenge focuses on a single variable. Supported variables and weights (each split across both horizons) are defined in [constants](../zeus/validator/constants.py) (e.g. 2 m temperature, 100 m wind components, surface solar radiation downwards).
 
 **Input Format:**
 The validator sends you a request containing:
 - **Bounding box coordinates**: `latitude_start`, `latitude_end`, `longitude_start`, `longitude_end` (always -90 to 90 for latitude, -180 to 179.75 for longitude)
-- **Time range**: `start_time` and `end_time` (float timestamps in UTC, always rounded to the hour)
-- **Number of time steps**: `requested_hours` (always 49)
+- **Time range**: `start_time` and `end_time` (float timestamps in UTC, aligned to the horizon)
+- **Number of time steps**: `requested_hours` — **49** for short-term or **361** for long-term
 - **Step size**: `step_size` (always 1 hour)
-- **Variable**: `variable` (string identifying the ERA5 variable to predict, e.g., `"2m_temperature"`, `"100m_u_component_of_wind"`, `"100m_v_component_of_wind"`)
+- **Variable**: `variable` (string identifying the ERA5 variable to predict)
 
 The geographical grid is generated from the bounding box with a resolution of 0.25 degrees, resulting in a fixed grid size of 721 × 1440 points (latitude × longitude) for the entire Earth.
 
 **Scoring:**
-You will be scored based on both the Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) between your predictions and the actual ground truth at those locations for the requested timepoints. The final score is the average of these two metrics: `(RMSE + MAE) / 2`. The actual ground truth are not yet known at the time you receive the challenge, so you will be scored in the future when these data become available (typically 7 days later).
+You will be scored based on both the Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) between your predictions and the actual ground truth at those locations for the requested timepoints. The final score is the average of these two metrics: `(RMSE + MAE) / 2`. Ground truth is not available at request time; scoring runs once ERA5 covers **every** timestep in that challenge’s window. Short horizons therefore tend to be scored sooner than the 15-day long horizon.
 
 Your goal is to minimize both RMSE and MAE, which will improve your ranking and subnet incentive. Scoring uses:
 - **Competition ranking**: Miners are ranked based on their scores, with lower scores (better predictions) receiving better ranks
@@ -129,7 +132,7 @@ Your goal is to minimize both RMSE and MAE, which will improve your ranking and 
 Miners with incorrect output shapes, non-finite values, or missing responses receive shape penalties.
 
 > [!IMPORTANT]
-> There are 4 requests per day at 00:00, 06:00, 12:00, and 18:00 UTC. Each request is always for the entire Earth (721 × 1440 grid points) and always for 49 time steps (from now to +48 hours in 1-hour intervals). Because the request format is fixed and predictable, miners can precompute forecasts ahead of time. Make sure to reformat your final output to the correct `(49, 721, 1440)` structure before compression.
+> There are 4 scheduling anchors per day at 00:30, 06:30, 12:30, and 18:30 UTC. Each challenge is always for the entire Earth (721 × 1440 grid points) and either **49** or **361** hourly steps. Compress the float16 array with the same layout: `(requested_hours, 721, 1440)`.
 
 ### What to return in each phase
 
@@ -137,8 +140,8 @@ The validator sends two kinds of requests. Your miner must detect the synapse ty
 
 | Phase | Request type | What you return | Do not send |
 |-------|----------------|-----------------|-------------|
-| **Commit (hash)** | `HashedTimePredictionSynapse` | Set **`synapse.hash`** to the commitment string: `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()`, where `compressed_bytes` is the **blosc2-compressed** bytes of your float16 prediction tensor `(49, 721, 1440)`. Use your wallet hotkey SS58 address as `hotkey_ss58`. See [zeus.utils.hash.prediction_hash](../zeus/utils/hash.py). | Do **not** set `predictions`; the validator only expects the hash in this phase. |
-| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse`  | Set **`synapse.predictions`** to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you hashed). So: same tensor → `compress_prediction(tensor)` → `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash you committed earlier. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the hash or you are marked bad. Return the predictions only in the time intervals specified in the miner's code.|
+| **Commit (hash)** | `HashedTimePredictionSynapse` | Set **`synapse.hash`** to the commitment string: `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()`, where `compressed_bytes` is the **blosc2-compressed** bytes of your float16 prediction tensor **`(synapse.requested_hours, 721, 1440)`** (49 or 361). Use your wallet hotkey SS58 address as `hotkey_ss58`. See [zeus.utils.hash.prediction_hash](../zeus/utils/hash.py). | Do **not** set `predictions`; the validator only expects the hash in this phase. |
+| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse`  | Set **`synapse.predictions`** to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you hashed). So: same tensor → `compress_prediction(tensor)` → `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash you committed earlier. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the hash or you are marked bad. Honor `requested_hours` and time fields from the synapse.|
 
 
 **Summary:**

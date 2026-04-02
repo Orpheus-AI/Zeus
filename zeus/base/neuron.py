@@ -165,14 +165,11 @@ class BaseNeuron(ABC):
         #     return False
         last_update = self.metagraph.last_update[self.uid].item()
         blocks_since_lat_update =  self.block - last_update
-        UPDATE_EVERY_N_BLOCKS = 5 * 60 * 7
+        UPDATE_EVERY_N_BLOCKS = 5 * 60 * 12
         bt.logging.debug(f"blocks_since_lat_update: {blocks_since_lat_update} current block: {self.block} last_update: {last_update}")
   
         # Define appropriate logic for when set weights.
-        return (
-            len(self.state_per_variable.values()) == 0
-            and blocks_since_lat_update > UPDATE_EVERY_N_BLOCKS)
-  
+        return blocks_since_lat_update > UPDATE_EVERY_N_BLOCKS
 
     def save_state(self):
         bt.logging.trace(

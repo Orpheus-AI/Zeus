@@ -98,7 +98,7 @@ async def _run_single_hash_phase(self: BaseValidatorNeuron, all_uids_to_query: L
             axons=axons_to_query,
             synapse=sample.build_synapse(HashedTimePredictionSynapse),
             deserialize=False,
-            timeout=self.config.neuron.hash_timeout,
+            timeout=HASH_DENDRITE_SETTINGS.forward_timeout,
         )
         end_time = time.time()
         bt.logging.warning(f"Time taken to query hashes: {end_time - start_time} seconds")

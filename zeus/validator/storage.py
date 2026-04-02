@@ -12,7 +12,8 @@ import torch
 
 from zeus.data.loaders.era5_cds import Era5CDSLoader
 from zeus.data.sample import Era5Sample
-from zeus.validator.constants import METADATA_DATABASE_LOCATION
+from zeus.validator.challenge_spec import offsets_from_predict_hours
+from zeus.validator.constants import METADATA_DATABASE_LOCATION, TIME_WINDOWS_PER_CHALLENGE
 from zeus.validator.miner_data import MinerData
 from zeus.utils.time import to_timestamp
 from zeus.utils.compression import decompress_prediction
@@ -37,19 +38,21 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     # Create subdirectory for the variable if it doesn't exist
     if not os.path.exists(self.best_predictions_path):
         os.makedirs(self.best_predictions_path, exist_ok=True)
-    variable_folder = os.path.join(self.best_predictions_path, sample.variable)
+    
+    variable_name = sample.variable.split("@")[0]
+    variable_folder = os.path.join(self.best_predictions_path, variable_name)
     os.makedirs(variable_folder, exist_ok=True)
 
     if prediction is None:
         bt.logging.warning(f"[save_best_miner_prediction] Prediction is None for miner {miner.uid} {miner.hotkey}")
         return
+
+
     
-    # Convert torch tensor to numpy array and save
-    prediction_numpy = prediction.detach().cpu().to(torch.float32).numpy()
     time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
 
     xr_dataarray = xr.DataArray(
-        data = prediction_numpy, 
+        data = prediction.to(dtype=torch.float32).numpy(), 
         dims = ["time", "latitude", "longitude"],
         coords = dict(
             time = time_coords,
@@ -57,12 +60,15 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
             longitude = np.arange(sample.lon_start, sample.lon_end+0.25, 0.25)
         ))
     
+    del prediction
+    
     rank = f"{best_10_hotkeys.index(miner.hotkey)+1}" if miner.hotkey in best_10_hotkeys else "unknown"
     randomness_tag = "random" if is_random else f"rank_{rank}" 
     filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_miner_{miner.hotkey}_{randomness_tag}.nc"
     filepath = os.path.join(variable_folder, filename)
     # Convert DataArray to Dataset with the variable name set to the sample.variable
     xr_dataset = xr.Dataset({sample.variable: xr_dataarray})
+    #bt.logging.info(f'{xr_dataarray}')
     xr_dataset.to_netcdf(filepath)
     bt.logging.success(f"[save_best_miner_prediction] Saved best miner prediction to {filepath}")
 
@@ -466,8 +472,20 @@ class OptimizedWeatherStorage:
         for chal in challenges:
             bt.logging.warning(f"score_and_prune: chal: {chal}")
             c_uid, lat_s, lat_e, lon_s, lon_e, start_t, end_t, hours, ins_at, var = chal
-            
-            sample = Era5Sample(start_t, end_t, lat_s, lat_e, lon_s, lon_e, var, ins_at, None, hours)
+
+            try:
+                start_offset, end_offset = offsets_from_predict_hours(hours, TIME_WINDOWS_PER_CHALLENGE)
+            except ValueError:
+                # TODO check currently in the competition if same amount of hours
+                bt.logging.warning(
+                    f"score_and_prune: challenge {c_uid} has hours_to_predict={hours} "
+                    f"that doesn't match any current window, deleting"
+                )
+                self._delete_challenge(c_uid)
+                continue
+
+            sample = Era5Sample(start_t, end_t, lat_s, lat_e, lon_s, lon_e, var, ins_at, None, hours,
+                                start_offset=start_offset, end_offset=end_offset)
             output = self.cds_loader.get_output(sample)
             sample.output_data = output
             #bt.logging.warning(f'score_and_prune: output: {output}')
@@ -486,7 +504,7 @@ class OptimizedWeatherStorage:
                         bt.logging.warning(f"score_and_prune: output is None for challenge {c_uid}")
                     self._delete_challenge(c_uid)
                 else:
-                    bt.logging.warning(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days)")
+                    bt.logging.warning(f"score_and_prune: skipping challenge {c_uid} (unscoreable but end_t within 3 days) end_t: {to_timestamp(end_t)}, latest: {to_timestamp(latest_available)}")
                 continue
 
             # First get the good miners from the SQL database
@@ -514,7 +532,8 @@ class OptimizedWeatherStorage:
             
             # the boolean with whether the miner is good or not (Not really needed because if the hash is empty then the miner is bad, but in case you still want it):
             is_good = [1]*len(miner_hotkeys) + [0]*len(current_challenge_bad_miner_hotkeys)
-                
+            
+            del output
             await score_func(sample, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good)
             self._delete_challenge(c_uid)
 

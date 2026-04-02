@@ -9,11 +9,15 @@ import bittensor as bt
 
 @dataclass(frozen=True)
 class DendriteSettings:
-    """Settings per dendrite/synapse type (hash vs prediction)."""
+    """Settings per dendrite/synapse type (hash vs prediction).
+
+    forward_timeout is the HTTP timeout in seconds for each forward call for that profile.
+    """
     forward_concurrency: int
     response_batch_k: int
     attempts_per_miner: int
     max_response_body_bytes: int
+    forward_timeout: float
 
 
 class ZeusDendrite(bt.Dendrite):
@@ -178,11 +182,13 @@ class ZeusDendrite(bt.Dendrite):
                         if bytes_read > max_body_bytes:
                             # Close the connection immediately to stop the flow
                             response.close() 
-                            raise ValueError("Miner sent too much data (Byte Limit Exceeded)")
+                            raise ValueError(f"Miner sent too much data (Byte Limit Exceeded) bytes_read: {bytes_read} axon: {target_axon} max_body_bytes: {max_body_bytes} for dendrite: {self._settings}")
                         chunks.append(chunk)
 
                     body = b"".join(chunks)
+                    del chunks
                     json_response = json.loads(body)
+                    del body
                     bt.logging.warning(f"read bytes {bytes_read}")
 
                     self.process_server_response(response, json_response, synapse)

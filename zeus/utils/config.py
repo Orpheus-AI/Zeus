@@ -145,19 +145,6 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.hash_timeout",
-        type=float,
-        help="The timeout for each forward call in hash phase in seconds.",
-        default=18,
-    )
-    parser.add_argument(
-        "--neuron.prediction_timeout",
-        type=float,
-        help="The timeout for each forward call in prediction phase in seconds.",
-        default=26,
-    )
-
-    parser.add_argument(
         "--neuron.num_concurrent_forwards",
         type=int,
         help="The number of concurrent forwards running at any time.",
@@ -193,9 +180,16 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.score_time_window",
+        "--neuron.score_time_window_short",
         type=int,
-        help="Number of recent rank samples to average when computing weights. Miners with fewer than n samples get weight 0.",
+        help="Number of recent rank samples to average when computing weights of short forecast challenges. Miners with fewer than n samples get weight 0.",
+        default=4,
+    )
+
+    parser.add_argument(
+        "--neuron.score_time_window_long",
+        type=int,
+        help="Number of recent rank samples to average when computing weights of long forecast challenges. Miners with fewer than n samples get weight 0.",
         default=8,
     )
 

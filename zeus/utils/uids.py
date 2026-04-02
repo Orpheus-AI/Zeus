@@ -1,8 +1,11 @@
 import random
 import bittensor as bt
 import numpy as np
+import pandas as pd
 from typing import Set
 
+ZEUS_V2_REGISTRATION_CUTOFF_UTC = pd.Timestamp("2026-03-17 18:00:00", tz="UTC")
+SECONDS_PER_BLOCK = 12
 
 def check_uid_availability(
     metagraph: "bt.metagraph.Metagraph",
@@ -32,9 +35,29 @@ def check_uid_availability(
     return True
 
 
+
+
+#def is_registered_after_release_zeus_v2(self, uid : int):
+def is_registered_after_release_zeus_v2(reg_block: int, current_block: int) -> bool:
+    """
+    This functions gets a uid and hotkey and checks is the neuron was registered before the release of the new subnet version
+    """  
+    
+    # Calculate estimated time elapsed (assuming ~12 seconds per block)
+    blocks_elapsed = current_block - reg_block
+    seconds_elapsed = blocks_elapsed * SECONDS_PER_BLOCK
+    
+    # Estimate the exact datetime of registration relative to now
+    estimated_reg_date = pd.Timestamp.now("UTC") - pd.Timedelta(seconds=seconds_elapsed)
+    
+    # bt.logging.debug(f"[is_registered_after_zeus_v2] UID {uid} estimated registration: {estimated_reg_date.strftime('%d.%m.%Y %H:%M:%S')}")
+
+    # Return True if registered on/after cutoff, False if before
+    return estimated_reg_date >= ZEUS_V2_REGISTRATION_CUTOFF_UTC
+
+
 def get_available_uids(
     metagraph: "bt.metagraph.Metagraph",
-
     vpermit_tao_limit: int,
     mainnet_uid: int,
     exclude: Set[int] = None,
@@ -54,12 +77,19 @@ def get_available_uids(
         exclude = set()
 
     avail_uids = []
+    
+    current_block = metagraph.block.item() if hasattr(metagraph.block, "item") else metagraph.block
+    
     for uid in range(metagraph.n.item()):
         available = check_uid_availability(
             metagraph, uid, vpermit_tao_limit, mainnet_uid
         )
+        
         if available:
-            avail_uids.append(uid)
+            reg_block = metagraph.block_at_registration[uid].item() if hasattr(metagraph.block_at_registration[uid], "item") else metagraph.block_at_registration[uid]
+            
+            if is_registered_after_release_zeus_v2(reg_block, current_block):
+                avail_uids.append(uid)
 
     candidate_uids = [uid for uid in avail_uids if uid not in exclude]
     return candidate_uids

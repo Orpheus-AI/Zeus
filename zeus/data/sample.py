@@ -7,6 +7,9 @@ from zeus.utils.time import to_timestamp
 from zeus.protocol import HashedTimePredictionSynapse, TimePredictionSynapse, PredictionSynapse
 from zeus import __version__ as zeus_version
 from zeus.validator.constants import DEFAULT_STEP_SIZE
+from zeus.validator.challenge_spec import make_state_key
+from zeus.utils.region_mask import europe_mask_for_grid
+from zeus.validator.constants import EUROPE_WEIGHT, DEFAULT_STEP_SIZE
 
 class Era5Sample:
 
@@ -23,6 +26,8 @@ class Era5Sample:
         output_data: Optional[torch.Tensor] = None,
         predict_hours: Optional[int] = None,
         step_size: int = DEFAULT_STEP_SIZE,
+        start_offset: Optional[int] = None,
+        end_offset: Optional[int] = None,
     ):
         """
         Create a datasample, either containing actual data or representing a database entry.
@@ -42,12 +47,23 @@ class Era5Sample:
         self.predict_hours = predict_hours
         self.step_size = step_size
 
+        self.start_offset = start_offset
+        self.end_offset = end_offset
+
         self.x_grid = get_grid(lat_start, lat_end, lon_start, lon_end)
+        europe_mask = europe_mask_for_grid(self.x_grid)
+        self.europe_weight = torch.where(europe_mask == 1, EUROPE_WEIGHT, 1)
 
         if output_data is not None:
             self.predict_hours = output_data.shape[0]
         elif predict_hours is None:
             raise ValueError("Either output data or predict hours must be provided.")
+
+    @property
+    def state_key(self) -> str:
+        if self.start_offset is None or self.end_offset is None:
+            raise ValueError("start_offset and end_offset must be set to derive state_key")
+        return make_state_key(self.variable, self.start_offset, self.end_offset)
 
 
     def get_bbox(self) -> Tuple[float]:

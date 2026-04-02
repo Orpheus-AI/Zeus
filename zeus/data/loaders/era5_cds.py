@@ -13,15 +13,15 @@ import torch
 import xarray as xr
 from requests.exceptions import HTTPError
 
+from zeus.data.converter import get_converter
 from zeus.data.loaders.era5_base import Era5BaseLoader
 from zeus.data.sample import Era5Sample
-from zeus.utils.time import get_hours, get_today, to_timestamp
+from zeus.utils.time import get_today, to_timestamp
 from zeus.validator.constants import (
     COPERNICUS_ERA5_URL,
     DEFAULT_STEP_SIZE,
     ERA5_CACHE_DIR,
-    TIME_OFFSET_PER_CHALLENGE,
-    MAX_TIME_OFFSET,
+    TIME_WINDOWS_PER_CHALLENGE,
 )
 
 
@@ -46,7 +46,7 @@ class Era5CDSLoader(Era5BaseLoader):
         self.cache_dir: Path = cache_dir
         self.last_stored_timestamp: pd.Timestamp = pd.Timestamp(0)
         self.updater_running = False
-        super().__init__(max_time_offset=MAX_TIME_OFFSET, step_size=DEFAULT_STEP_SIZE, **kwargs)
+        super().__init__(step_size=DEFAULT_STEP_SIZE, **kwargs)
 
     def _get_era5_cutoff(self) -> pd.Timestamp:
         return get_today("h") - pd.Timedelta(days=self.ERA5_DELAY_DAYS)
@@ -105,27 +105,29 @@ class Era5CDSLoader(Era5BaseLoader):
 
     def get_challenge_samples(self) -> List[Era5Sample]:
         """
-        One sample per chunk: each chunk has TIME_OFFSET_PER_CHALLENGE steps with step_size.
-        Number of chunks = max_time_offset // TIME_OFFSET_PER_CHALLENGE (no hardcoded size).
-        Same bbox and variable for all chunks; only time windows differ.
+        First challenge: hours [0,48] from base_start.
+        Second challenge: hours [49, 24*15] from base_start.
         """
         samples = []
 
         lat_start, lat_end, lon_start, lon_end = self.get_full_bbox()
         base_start = (pd.Timestamp.now('UTC').floor('6h')).replace(tzinfo=None)
         step_size = self.step_size
-        num_chunks = self.max_time_offset // TIME_OFFSET_PER_CHALLENGE 
+
         
+
         for variable in self.data_vars:
-            for chunk_idx in range(num_chunks):
-                start_offset_hours = chunk_idx * TIME_OFFSET_PER_CHALLENGE
-                end_offset_hours = (chunk_idx + 1) * TIME_OFFSET_PER_CHALLENGE
-                chunk_start = base_start + pd.Timedelta(hours=start_offset_hours)
-                chunk_end = base_start + pd.Timedelta(hours=end_offset_hours)
-                span_hours = get_hours(chunk_start, chunk_end)
-                predict_hours = span_hours // step_size + 1
-                bt.logging.info(f"chunk_start: {chunk_start}, chunk_end: {chunk_end}, predict_hours: {predict_hours}")
-                
+            for start_h, end_h in TIME_WINDOWS_PER_CHALLENGE:
+                chunk_start = base_start + pd.Timedelta(hours=start_h)
+                chunk_end = base_start + pd.Timedelta(hours=end_h)
+                predict_hours = len(
+                    pd.date_range(chunk_start, chunk_end, freq=f"{step_size}h")
+                )
+                bt.logging.info(
+                    f"challenge window [{start_h}h,{end_h}h]: {chunk_start} -> {chunk_end}, "
+                    f"predict_hours={predict_hours}"
+                )
+
                 samples.append(
                     Era5Sample(
                         lat_start=lat_start,
@@ -137,29 +139,13 @@ class Era5CDSLoader(Era5BaseLoader):
                         end_timestamp=chunk_end.timestamp(),
                         predict_hours=predict_hours,
                         step_size=step_size,
+                        start_offset=start_h,
+                        end_offset=end_h,
                     )
                 )
         return samples
 
-    def get_sample(self) -> Era5Sample:
-        """Full 48-step window for ground truth and expected shape (steps 1–48, step_size 3)."""
-        lat_start, lat_end, lon_start, lon_end = self.get_full_bbox()
-        start_timestamp =  get_today("h")
-        end_timestamp = start_timestamp + pd.Timedelta(hours=(self.max_time_offset - 1) * self.step_size)
-        logging.info(f"start_timestamp: {start_timestamp}, end_timestamp: {end_timestamp}")
-        logging.info(f"max_time_offset: {self.max_time_offset}, step_size: {self.step_size}")
-        return Era5Sample(
-            lat_start=lat_start,
-            lat_end=lat_end,
-            lon_start=lon_start,
-            lon_end=lon_end,
-            variable=self.sample_variable(),
-            start_timestamp=start_timestamp.timestamp(),
-            end_timestamp=end_timestamp.timestamp(),
-            predict_hours=self.max_time_offset,
-            step_size=self.step_size,
-        )
-    
+
     def get_output(self, sample: Era5Sample) -> Optional[torch.Tensor]:
         end_time = to_timestamp(sample.end_timestamp)
         if end_time > self.last_stored_timestamp:
@@ -173,7 +159,12 @@ class Era5CDSLoader(Era5BaseLoader):
         )
         if data4d is None:
             return None
-        return data4d[..., 2:].squeeze(dim=-1)
+        result = data4d[..., 2:].squeeze(dim=-1)
+        variable_converter = get_converter(sample.variable)
+        # ! First convert to desired unit then convert to float16 to save memory
+        out = variable_converter.era5_to_target(result)
+        out = out.to(torch.float16)
+        return out
 
     def get_file_name(self, variable: str, timestamp: pd.Timestamp) -> str:
         return os.path.join(self.cache_dir, variable, f"era5_{timestamp.strftime('%Y-%m-%d')}.nc")
@@ -247,7 +238,7 @@ class Era5CDSLoader(Era5BaseLoader):
         for variable in self.data_vars:
             for days_ago in range(
                 self.ERA5_DELAY_DAYS,
-                self.ERA5_DELAY_DAYS +4 #+ math.ceil(self.max_time_offset / 24) + 1,
+                self.ERA5_DELAY_DAYS +19,
             ):
                 timestamp = current_day - pd.Timedelta(days=days_ago)
                 filename = self.get_file_name(variable, timestamp)

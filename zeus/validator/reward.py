@@ -74,37 +74,55 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
     return ranks
 
 
-def set_errors(sample: Era5Sample, miner_uids: List[int], axons_to_query: List, compressed_predictions: List[bytes], expected_shape: torch.Size) -> List[MinerData]:
+def set_errors(
+    sample: Era5Sample,
+    miner_uids: List[int],
+    axons_to_query: List,
+    compressed_predictions: List[Optional[bytes]],
+    expected_shape: torch.Size,
+) -> List[MinerData]:
+
 
     output_data = sample.output_data
-    output_data = output_data.to(torch.float16)
     latitude_weights = np.load(LATITUDE_WEIGHTS_PATH)
     latitude_weights = torch.from_numpy(latitude_weights).to(output_data.device).to(output_data.dtype)
+    europe_weight = sample.europe_weight
     
     miners_data = []
-    for uid, axon, prediction in zip(miner_uids, axons_to_query, compressed_predictions):
+    for i in range(len(miner_uids)):
+        uid = miner_uids[i]
+        axon = axons_to_query[i]
+        prediction = compressed_predictions[i]
+        compressed_predictions[i] = None
         hotkey = axon.hotkey
         if prediction is None:
             temp_tensor = None
         else:
             temp_tensor = decompress_prediction(prediction, expected_shape)
+            del prediction
             
 
         is_penalized = should_apply_shape_penalty(expected_shape, temp_tensor)
         if is_penalized:
-            rmse = float('inf')
-            mae = float('inf')
+            europe_weighted_rmse = float('inf')
+            europe_weighted_mae = float('inf')
         else:
-            rmse = custom_rmse(output_data, temp_tensor, latitude_weights)
-            mae = custom_mae(output_data, temp_tensor, latitude_weights) 
 
-        if math.isnan(rmse): rmse = float('inf')
-        if math.isnan(mae): mae = float('inf')
+            cosine_rmse, europe_weighted_rmse = custom_rmse(
+                output_data, temp_tensor, latitude_weights, europe_weight
+            )
+            cosine_mae, europe_weighted_mae = custom_mae(
+                output_data, temp_tensor, latitude_weights, europe_weight
+                )
+  
 
-        # prediction is not needed anymore, so we set it to None to save memory
-        miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=None, rmse=rmse, mae = mae, shape_penalty=is_penalized)
+        if math.isnan(europe_weighted_rmse): europe_weighted_rmse = float('inf')
+        if math.isnan(europe_weighted_mae): europe_weighted_mae = float('inf')
+
+        miner_data = MinerData(uid=uid, hotkey=hotkey, prediction=None, rmse=europe_weighted_rmse, mae = europe_weighted_mae, shape_penalty=is_penalized)
         miners_data.append(miner_data)
-    
+        del temp_tensor
+
     return miners_data
 
 def calculate_scores(miners_data: List[MinerData]) -> List[MinerData]:
@@ -277,7 +295,7 @@ def complete_challenge(
     self.update_scores(
         [miner.score for miner in miners_data],
         [miner.hotkey for miner in miners_data],
-        sample.variable
+        sample.state_key,
     )
     
     bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")

@@ -27,6 +27,7 @@ Traditionally, environmental forecasting is achieved through physics-based numer
 
 **Features:**
 
+- **Short- and long-horizon forecasts:** Validators issue both **short-range** challenges (hourly steps from the current hour through **+48 hours**, 49 timesteps) and **long-range** challenges (the same grid through **+360 hours**, i.e. 15 days, 361 timesteps). Each ERA5 variable is evaluated on both horizons; see [constants](zeus/validator/constants.py) for windows and weights.
 - **Model Evolution:** Our platform continuously integrates the latest research and developments in AI to adapt to evolving generative techniques.
 
 **Core Components:**

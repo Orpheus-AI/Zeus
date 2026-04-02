@@ -2,7 +2,7 @@ import math
 import os
 import random
 import time
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import bittensor as bt
 import numpy as np
@@ -10,12 +10,12 @@ import pandas as pd
 import torch
 import xarray as xr
 
+from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.data.sample import Era5Sample
 from zeus.protocol import TimePredictionSynapse
 from zeus.utils.compression import decompress_prediction
 from zeus.utils.time import to_timestamp
-from zeus.validator.constants import PREDICTION_DENDRITE_SETTINGS
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (
     _build_bad_miners_data,
@@ -30,7 +30,6 @@ def filter_eligible_miners_for_scoring(
     current_challenge_all_miner_hotkeys: List[str],
     miner_uids_list: List[int],
     hashes_list: List[str],
-    query_timestamp: float,
     list_is_good: List[bool],
 ) -> Tuple[List[int], List[str], List[bool], List[str]]:
     """
@@ -67,26 +66,39 @@ def filter_eligible_miners_for_scoring(
 
 
 
+def _get_prediction_dendrite_and_settings(
+    self, sample: Era5Sample
+) -> Tuple[ZeusDendrite, DendriteSettings]:
+    spec = self.challenge_registry.get(sample.state_key)
+    if spec is None:
+        raise ValueError(f"No ChallengeSpec for state_key={sample.state_key}")
+    settings = spec.prediction_dendrite_settings
+    return self.prediction_dendrites[settings], settings
+
+
 async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_list: List[str], axons_to_query: List[bt.Axon]) -> List[Optional[bytes]]:
     """
     Handles a single batch of miners. Variables here are cleared from memory 
     once the function returns to run_single_hash_challenge.
     """
 
- 
+    dendrite, pred_settings = _get_prediction_dendrite_and_settings(self, sample)
+
     start_time = time.time()
-    responses: List[TimePredictionSynapse] = await self.dendrite_prediction(
+    responses: List[TimePredictionSynapse] = await dendrite(
         axons=axons_to_query,
         synapse=sample.build_synapse(TimePredictionSynapse),
         deserialize=False,
-        timeout=self.config.neuron.prediction_timeout,
+        timeout=pred_settings.forward_timeout,
     )
     end_time = time.time()
     bt.logging.success(f"[fetch_predictions_and_verify_hashes] Received {len(responses)} responses in {end_time - start_time} seconds")
 
 
     compressed_predictions = create_compressed_predictions(responses)
- 
+
+    del responses
+
     compressed_predictions = _verify_hashes(axons_to_query, compressed_predictions, hashes_list)
     return compressed_predictions
 
@@ -106,7 +118,7 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
         List of all MinerData objects (good, bad, and non-committed miners)
     """
     # we want to score only those miners that were registered after the release of v2 and were not deregistered
-    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, sample.query_timestamp, is_good_list)
+    miners_uids, miners_hashes, miners_is_good, _ = filter_eligible_miners_for_scoring(self, current_challenge_all_miner_hotkeys, miner_uids, hashes, is_good_list)
     
     all_uids_to_query = [uid for uid, is_good in zip(miners_uids, miners_is_good) if is_good]
     hashes_from_uids_to_query = [hash for hash, is_good in zip(miners_hashes, miners_is_good) if is_good]
@@ -124,7 +136,13 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
 
     expected_shape = sample.output_data.shape
 
-    good_miners_data, predictions_bad_miners_data = await run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids_to_query, expected_shape, calculate_metrics = True)
+    def _score_batch(miner_uids, axons_to_query, compressed_predictions):
+        return calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape)
+
+    good_miners_data, predictions_bad_miners_data = await run_prediction_phase(
+        self, sample, all_uids_to_query, hashes_from_uids_to_query,
+        process_batch=_score_batch,
+    )
 
     all_miners_data = good_miners_data + bad_miners_data + predictions_bad_miners_data
     complete_challenge(self, sample, all_miners_data)
@@ -206,6 +224,45 @@ def find_allowed_miners_to_query(new_hotkeys2uids, previous_hotkeys2uids):
 
     return allowed_hotkeys_to_query, allowed_uids_to_query
 
+def _get_best_hotkeys_to_query(state_per_challenge: dict, state_key: str) -> Tuple[List[str], List[str]]:
+    """Determine the best hotkeys to query for a given challenge, handling wind component unions.
+    
+    When calculating the wind speed, it is best to have the wind components come from the same miner.
+    However, in a rare case, the best miner of wind u is not the best miner of wind v, and vice versa.
+    Therefore, we need to take the union of the best 10 miners of the two wind components.
+    """
+    def get_union_hotkeys(key: str) -> Tuple[List[str], List[str]]:
+        best_10 = state_per_challenge[key].best_10_miners
+        var_name = key.split("@")[0]
+        
+        if var_name == "100m_u_component_of_wind":
+            key_v = key.replace("100m_u_component_of_wind", "100m_v_component_of_wind")
+            best_10_v = state_per_challenge[key_v].best_10_miners if key_v in state_per_challenge else []
+            to_query = list(set(best_10 + best_10_v))
+        elif var_name == "100m_v_component_of_wind":
+            key_u = key.replace("100m_v_component_of_wind", "100m_u_component_of_wind")
+            best_10_u = state_per_challenge[key_u].best_10_miners if key_u in state_per_challenge else []
+            to_query = list(set(best_10 + best_10_u))
+        else:
+            to_query = best_10
+            
+        return best_10, to_query
+
+    if state_key in state_per_challenge:
+        best_10_hotkeys, best_hotkeys_to_query = get_union_hotkeys(state_key)
+        bt.logging.info(f"The best miners for challenge {state_key} are {best_10_hotkeys}, and the ones that we query are {best_hotkeys_to_query}")
+        return best_10_hotkeys, best_hotkeys_to_query
+        
+    # In the case when the 15 day challenge doesn't have best miner, we want to query the best miners from the 28 hour challenge. 
+    matching_keys = [k for k in state_per_challenge if k.split("@")[0] == state_key.split("@")[0]]
+    if matching_keys:
+        matching_key = matching_keys[0]
+        best_10_hotkeys, best_hotkeys_to_query = get_union_hotkeys(matching_key)
+        bt.logging.info(f"The best miners for challenge {state_key} are not found, using {matching_key} instead. Best 10 miners are {best_10_hotkeys}, and the ones that we query are {best_hotkeys_to_query}")
+        return best_10_hotkeys, best_hotkeys_to_query
+
+    return [], []
+
 def filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query):
     """Filter miner data to only include miners with allowed hotkeys.
     
@@ -242,7 +299,10 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
 
     for sample in challenges:
-        target_variable = sample.variable
+        # TODO : only do if a challenge is for 15 days, we do not request the other ones. 
+        if sample.predict_hours <= 49:
+            bt.logging.info(f"[run_initial_prediction_top_k_phases] Skipping sample {sample.state_key} because it has {sample.predict_hours} hours, not 15 days.")
+            continue
         sample_str = str(sample)
 
         good_hashes, good_hotkeys = self.database.get_hashing_data_for_sample(sample)
@@ -253,23 +313,31 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
         filtered_good_hashes, filtered_good_hotkeys = filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query)
         
-        if target_variable in self.state_per_variable:
-            best_10_hotkeys = self.state_per_variable[target_variable].best_10_miners  
-        else:
-            best_10_hotkeys = []
-        
-        hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_10_hotkeys, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
+        state_key = sample.state_key
+        best_10_hotkeys, best_hotkeys_to_query = _get_best_hotkeys_to_query(self.state_per_challenge, state_key)
+       
+        hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_hotkeys_to_query, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
 
-        expected_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
-        good_miners_data, bad_miners_data = await run_prediction_phase(self, sample, uids_to_query, hashes_of_queried, expected_shape, calculate_metrics = False)
-        # if len(good_miners_data) > 0:
-            
-        #     for i in range(len(good_miners_data)):
-        #         try:
-        #             save_best_miner_prediction(self, sample, good_miners_data[i], query_random_miners, best_10_hotkeys)
-        #         except Exception as e:
-        #             bt.logging.warning(f"[_select_top_k_miners_to_query] Error: {e}")
-                    
+
+        def _save_and_free(miner_uids, axons_to_query, compressed_predictions):
+            batch = []
+            for i, (uid, axon, pred) in enumerate(zip(miner_uids, axons_to_query, compressed_predictions)):
+                compressed_predictions[i] = None  # Free the heavy compressed string list reference immediately
+                if pred is not None:
+                    miner = MinerData(uid=uid, hotkey=axon.hotkey, prediction=pred)
+                    # try:
+                    #     save_best_miner_prediction(self, sample, miner, query_random_miners, best_10_hotkeys)
+                    # except Exception as e:
+                    #     bt.logging.warning(f"[run_initial_prediction_top_k_phases] {miner.hotkey} {miner.uid} Error saving prediction: {e}")
+                    miner.prediction = None  # Free prediction before moving to the next one
+                    batch.append(miner)
+                    del pred
+            return batch
+
+        good_miners_data, bad_miners_data = await run_prediction_phase(
+            self, sample, uids_to_query, hashes_of_queried,
+            process_batch=_save_and_free,
+        )
 
         bad_hotkeys = [miner.hotkey for miner in bad_miners_data]
         if len(bad_hotkeys) > 0:
@@ -281,23 +349,37 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
         self.performance_database_api.insert_top_k_info(sample, hotkeys_to_query, uids_to_query, bad_hotkeys)
 
 
-async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids_to_query, expected_shape, calculate_metrics):
+async def run_prediction_phase(
+    self,
+    sample,
+    all_uids_to_query,
+    hashes_from_uids_to_query,
+    process_batch: Callable[[List[int], List, List[Optional[bytes]]], List[MinerData]],
+):
     """Run prediction phase querying miners in batches and verifying their predictions.
+
+    The caller controls what happens to each batch via `process_batch`.  This
+    function only owns the batch loop, UID tracking and bad-miner detection.
     
     Args:
         self: BaseValidatorNeuron instance
         sample: Era5Sample challenge to process
         all_uids_to_query: List of miner UIDs to query
         hashes_from_uids_to_query: List of expected hashes for each UID
-        expected_shape: Expected shape of the prediction tensor
-        calculate_metrics: Boolean flag to determine if metrics should be calculated
+        process_batch: Strategy callable invoked per batch with
+            (miner_uids, axons_to_query, compressed_predictions).
+            Must return the list of good MinerData from that batch.
         
     Returns:
         Tuple of (good_miners_data, bad_miners_data) where good_miners_data contains
         MinerData objects with valid predictions, and bad_miners_data contains
         MinerData objects for miners that failed
     """
-    settings = PREDICTION_DENDRITE_SETTINGS
+    spec = self.challenge_registry.get(sample.state_key)
+    if spec is None:
+        bt.logging.error(f"[run_prediction_phase] No ChallengeSpec for state_key={sample.state_key}")
+        return [], []
+    settings = spec.prediction_dendrite_settings
     bt.logging.info(f'[run_prediction_phase] The number of all miners uids is {len(all_uids_to_query)}')
     steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / settings.response_batch_k)
 
@@ -318,26 +400,20 @@ async def run_prediction_phase(self, sample, all_uids_to_query, hashes_from_uids
             allowed_uids=all_uids_to_query,
             allowed_attempts=settings.attempts_per_miner
         )
-      
+
         axons_to_query = [self.metagraph.axons[uid] for uid in miner_uids]
- 
+  
+
         if not miner_uids:
             bt.logging.info("[run_prediction_phase] No miners in this batch have a valid prediction. Skipping.")
             continue
 
-        hashes_for_batch = [uid_to_hash[uid] for uid in miner_uids]
+        hashes_for_batch = [uid_to_hash.get(uid, None) for uid in miner_uids]
 
         bt.logging.debug(f"[run_prediction_phase] axons_to_query: {len(axons_to_query)} hashes :{len(hashes_from_uids_to_query)}")
         compressed_predictions = await fetch_predictions_and_verify_hashes(self, sample, hashes_for_batch, axons_to_query)
 
-        if calculate_metrics:
-            batch_good = calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predictions, expected_shape)
-        else:
-            batch_good = [
-                MinerData(uid=uid, hotkey=axon.hotkey, prediction=pred)
-                for uid, axon, pred in zip(miner_uids, axons_to_query, compressed_predictions)
-                if pred is not None
-            ]
+        batch_good = process_batch(miner_uids, axons_to_query, compressed_predictions)
 
         good_miners_data.extend(batch_good)
         good_miners_uids.update({m.uid for m in batch_good})
