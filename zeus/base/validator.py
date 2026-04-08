@@ -49,23 +49,24 @@ from zeus.validator.challenge_spec import ChallengeSpec
 from zeus.validator.reward import compute_min_rank_weights
 
 
-def _count_windows_per_variable(registry: Dict[str, ChallengeSpec]) -> Dict[str, int]:
-    """Total number of time-window challenges registered for each ERA5 variable."""
-    counts: Dict[str, int] = {}
+def _sum_weights_per_variable(registry: Dict[str, ChallengeSpec]) -> Dict[str, float]:
+    """Total weight of all time-window challenges registered for each ERA5 variable."""
+    weights: Dict[str, float] = {}
+
     for spec in registry.values():
-        counts[spec.variable] = counts.get(spec.variable, 0) + 1
-    return counts
+        weights[spec.variable] = weights.get(spec.variable, 0.0) + spec.weight
+    return weights
 
 
-def _count_available_per_variable(
+def _sum_available_weights_per_variable(
     available_keys: List[str], registry: Dict[str, ChallengeSpec]
-) -> Dict[str, int]:
-    """How many of the available (have rank_history) challenges belong to each variable."""
-    counts: Dict[str, int] = {}
+) -> Dict[str, float]:
+    """Total weight of the available (have rank_history) challenges for each variable."""
+    weights: Dict[str, float] = {}
     for key in available_keys:
         var = registry[key].variable
-        counts[var] = counts.get(var, 0) + 1
-    return counts
+        weights[var] = weights.get(var, 0.0) + registry[key].weight
+    return weights
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -348,18 +349,19 @@ class BaseValidatorNeuron(BaseNeuron):
         ]
 
         if available_keys:
-            windows_per_var = _count_windows_per_variable(self.challenge_registry)
-            available_per_var = _count_available_per_variable(available_keys, self.challenge_registry)
+            total_weights_per_var = _sum_weights_per_variable(self.challenge_registry)
+            available_weights_per_var = _sum_available_weights_per_variable(available_keys, self.challenge_registry)
+
 
             for state_key in available_keys:
                 spec = self.challenge_registry[state_key]
                 state = self.state_per_challenge[state_key]
 
-                effective_weight = spec.weight * windows_per_var[spec.variable] / available_per_var[spec.variable]
+                effective_weight = spec.weight * total_weights_per_var[spec.variable] / available_weights_per_var[spec.variable]
                 bt.logging.info(
                     f"Calculating weights for {state_key} "
                     f"(effective_weight={effective_weight:.4f}, "
-                    f"{available_per_var[spec.variable]}/{windows_per_var[spec.variable]} windows available)"
+                    f"available_weight={available_weights_per_var[spec.variable]:.4f}/total_weight={total_weights_per_var[spec.variable]:.4f})"
                 )
 
                 max_len = max(len(state.rank_history[hotkey]) for hotkey in state.rank_history)

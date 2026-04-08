@@ -5,13 +5,13 @@ import aiohttp
 import bittensor as bt
 import traceback
 import math
+import subprocess
 from zeus.validator.miner_data import MinerData
 from zeus.data.sample import Era5Sample
 from zeus.protocol import HashedTimePredictionSynapse
 
 LOG_COLOR = "\033[1;35m"
 LOG_COLOR_RESET = "\033[0m"
-
 
 class PerformanceDatabaseConnection:
     """
@@ -41,7 +41,9 @@ class PerformanceDatabaseConnection:
         self.wallet = wallet
         self.api_url = api_url
         self.session = None
-        
+
+        self.validator_version = self._get_git_commit_hash()
+
         # Create a dedicated background event loop for thread-safe async tasks
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -58,6 +60,19 @@ class PerformanceDatabaseConnection:
         bt.logging.info(f"{LOG_COLOR}[PerformanceDatabaseConnection] Initialized API endpoint: {self.api_url}{LOG_COLOR_RESET}")
 
 # --------------------------  Helper functions --------------------------
+    def _get_git_commit_hash(self) -> str:
+        """Safely fetch the current git commit hash."""
+        try:
+            commit_hash = subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], 
+                stderr=subprocess.DEVNULL
+            ).decode('utf-8').strip()
+            bt.logging.info(f"{LOG_COLOR}[PerformanceDatabaseConnection] Git commit hash: {commit_hash}{LOG_COLOR_RESET}")
+            return commit_hash
+        except Exception as e:
+            bt.logging.warning(f"{LOG_COLOR}[PerformanceDatabaseConnection] Could not fetch git commit hash: {e}{LOG_COLOR_RESET}")
+            return "unknown"
+
     def _start_background_loop(self, loop: asyncio.AbstractEventLoop):
         """Runs forever in the background thread."""
         asyncio.set_event_loop(loop)
@@ -197,7 +212,8 @@ class PerformanceDatabaseConnection:
                     "rmse": rmse_value,
                     "mae": mae_value,
                     "rank": miner.score,
-                    "penalty": int(miner.shape_penalty)
+                    "penalty": int(miner.shape_penalty),
+                    "validator_version": self.validator_version
                 })
             
             # Skip if no valid miners to log
@@ -247,6 +263,7 @@ class PerformanceDatabaseConnection:
                     "miner_hotkey": m["hotkey"],
                     "rank": m["avg_rank"],
                     "miner_window": m["miner_window"],
+                    "validator_version": self.validator_version
                 }
                 for m in miners_metadata
             ]
@@ -302,7 +319,8 @@ class PerformanceDatabaseConnection:
                     "queried_at": requested_at,
                     "response_time": response_time,
                     "attempt_number": attempt_number,
-                    "successful_attempt": successful_attempt
+                    "successful_attempt": successful_attempt,
+                    "validator_version": self.validator_version
                 })
             
             if not hash_responses_info:
@@ -353,7 +371,8 @@ class PerformanceDatabaseConnection:
                 top_miners_predictions.append({
                     "miner_hotkey": hotkey,
                     "miner_uid": uid,
-                    "received_penalty": received_penalty
+                    "received_penalty": received_penalty,
+                    "validator_version": self.validator_version
                 })
             
             if not top_miners_predictions:
