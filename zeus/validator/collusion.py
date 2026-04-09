@@ -52,7 +52,7 @@ def apply_collusion_penalty(miners_data: List[MinerData], hotkey2registration_bl
             newest.shape_penalty = True
             penalized_uids.add(newest.uid)
 
-    bt.logging.warning(f'{miners_data}') # TODO maybe comment this out
+    #bt.logging.warning(f'{miners_data}') # TODO maybe comment this out
 
     return miners_data
 

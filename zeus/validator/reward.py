@@ -302,8 +302,8 @@ def complete_challenge(
     bt.logging.warning(f"complete_challenge: correct_shape: {correct_shape} miners_data: {len(miners_data)} {sample.variable}")
     hotkey2registration_block = {miner.hotkey: self.metagraph.block_at_registration[miner.uid] for miner in miners_data}
     threshold = pick_threshold(sample.predict_hours)
-
-    miners_data = apply_collusion_penalty(miners_data, hotkey2registration_block, threshold)
+    if sample.variable != 'surface_solar_radiation_downwards':
+        miners_data = apply_collusion_penalty(miners_data, hotkey2registration_block, threshold)
     miners_data = set_rewards(
         miners_data=miners_data, 
     )
