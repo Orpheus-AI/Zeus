@@ -23,7 +23,7 @@ class ChallengeSpec:
 
 def build_challenge_registry(
     era5_data_vars: Dict[str, float],
-    time_windows: list[Tuple[int, int]],
+    time_window_weights: Dict[Tuple[int, int], float],
     prediction_settings_per_window: Dict[Tuple[int, int], DendriteSettings],
 ) -> Dict[str, ChallengeSpec]:
     """Build {state_key: ChallengeSpec} from ERA5 variables × time windows.
@@ -31,17 +31,16 @@ def build_challenge_registry(
     Each variable's total weight is split equally across its windows.
     prediction_settings_per_window maps (start_offset, end_offset) -> DendriteSettings.
     """
-    n_windows = len(time_windows)
+
     registry: Dict[str, ChallengeSpec] = {}
     for variable, total_weight in era5_data_vars.items():
-        per_window_weight = total_weight / n_windows
-        for start_offset, end_offset in time_windows:
+         for (start_offset, end_offset), window_weight in time_window_weights.items():
             settings = prediction_settings_per_window[(start_offset, end_offset)]
             spec = ChallengeSpec(
                 variable=variable,
                 start_offset=start_offset,
                 end_offset=end_offset,
-                weight=per_window_weight,
+                weight=total_weight * window_weight,
                 prediction_dendrite_settings=settings,
             )
             registry[spec.state_key] = spec

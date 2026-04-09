@@ -42,7 +42,7 @@ PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
 
 # after how many percent of above it yields results
 RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be larger than window size used for ranking
-
+COLLUSION_PENALTY_THRESHOLD = {SHORT_CHALLENGE: 0.002, LONG_CHALLENGE: 0.00002}
 # the corresponding ERA5 variables miners are tested on with their scoring weight
 ERA5_DATA_VARS: Dict[str, float] = {
     "2m_temperature": 0.2, 
@@ -57,9 +57,14 @@ ERA5_RESOLUTION = 0.25
 ERA5_AREA_SAMPLE_RANGE: Tuple[float, float] = (4, 16) # 
 
 # Axis-aligned bounding box for Europe (lat °N, lon °E)
+# if multiple weights for a region, then we take the maximum weight
 EUROPE_LATITUDE_RANGE = (34.0, 72.0)
 EUROPE_LONGITUDE_RANGE = (-25.0, 45.0)
 EUROPE_WEIGHT = 1.5
+
+GERMANY_LATITUDE_RANGE = (47.0, 56.0)
+GERMANY_LONGITUDE_RANGE = (6.0, 15.0)
+GERMANY_WEIGHT = 2.5 
 # ------------------------------------------------------
 # --------------- Current/Future prediction-------------
 # ------------------------------------------------------
@@ -81,6 +86,10 @@ DEFAULT_STEP_SIZE: int = 1  # hours between prediction time steps (synapse defau
 MIN_HOURS_BETWEEN_REQUESTS = 5
 
 TIME_WINDOWS_PER_CHALLENGE: List[Tuple[int, int]] = [SHORT_CHALLENGE, LONG_CHALLENGE]
+TIME_WINDOW_WEIGHTS: Dict[Tuple[int, int], float] = {
+    SHORT_CHALLENGE: 0.2,
+    LONG_CHALLENGE: 0.8,
+}
 
 PERCENTAGE_GOING_TO_WINNER = 0.95
 
@@ -91,6 +100,6 @@ from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpe
 
 CHALLENGE_REGISTRY: Dict[str, ChallengeSpec] = build_challenge_registry(
     era5_data_vars=ERA5_DATA_VARS,
-    time_windows=TIME_WINDOWS_PER_CHALLENGE,
+    time_window_weights=TIME_WINDOW_WEIGHTS,
     prediction_settings_per_window=PREDICTION_SETTINGS_PER_WINDOW,
 )

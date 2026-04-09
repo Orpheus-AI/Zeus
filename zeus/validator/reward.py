@@ -17,6 +17,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import bittensor as bt
@@ -29,6 +30,12 @@ from zeus.utils.compression import decompress_prediction
 from zeus.validator.constants import PERCENTAGE_GOING_TO_WINNER, LATITUDE_WEIGHTS_PATH
 from zeus.validator.miner_data import MinerData
 from zeus.validator.metrics import custom_rmse, custom_mae
+from zeus.validator.collusion import apply_collusion_penalty, pick_threshold
+
+# Samples before this instant use OLD_REGION_CONFIGS weights (GMT+0 / Copernicus wall time).
+_OLD_EUROPE_WEIGHT_CUTOFF_TS = datetime(
+    2026, 4, 10, 6, 0, 0, tzinfo=timezone.utc
+).timestamp()
 
 
 def should_apply_shape_penalty(correct_shape: torch.Size, prediction: torch.Tensor) -> bool:
@@ -68,6 +75,7 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
             ranks.append(inf_rank)
             continue
         if i > 0 and round(val, precision) != round(values[i-1], precision):
+            bt.logging.warning("[calculate_competition_ranks] Problem with the collusion detection!")
             current_rank = current_rank + 1
         ranks.append(current_rank)
         
@@ -86,8 +94,13 @@ def set_errors(
     output_data = sample.output_data
     latitude_weights = np.load(LATITUDE_WEIGHTS_PATH)
     latitude_weights = torch.from_numpy(latitude_weights).to(output_data.device).to(output_data.dtype)
-    europe_weight = sample.europe_weight
-    
+    if sample.start_timestamp < _OLD_EUROPE_WEIGHT_CUTOFF_TS:
+        europe_weight = sample.old_europe_weight
+        bt.logging.warning(f"Using old europe weight for sample {sample.start_timestamp} cutoff {_OLD_EUROPE_WEIGHT_CUTOFF_TS}")
+    else:
+        europe_weight = sample.europe_weight
+        bt.logging.warning(f"Using new europe weight for sample {sample.start_timestamp} cutoff {_OLD_EUROPE_WEIGHT_CUTOFF_TS}")
+
     miners_data = []
     for i in range(len(miner_uids)):
         uid = miner_uids[i]
@@ -287,6 +300,10 @@ def complete_challenge(
     """
     correct_shape = sample.output_data.shape
     bt.logging.warning(f"complete_challenge: correct_shape: {correct_shape} miners_data: {len(miners_data)} {sample.variable}")
+    hotkey2registration_block = {miner.hotkey: self.metagraph.block_at_registration[miner.uid] for miner in miners_data}
+    threshold = pick_threshold(sample.predict_hours)
+    if sample.variable != 'surface_solar_radiation_downwards':
+        miners_data = apply_collusion_penalty(miners_data, hotkey2registration_block, threshold)
     miners_data = set_rewards(
         miners_data=miners_data, 
     )

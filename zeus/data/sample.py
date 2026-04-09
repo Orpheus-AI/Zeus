@@ -6,10 +6,9 @@ from zeus.utils.coordinates import get_grid
 from zeus.utils.time import to_timestamp
 from zeus.protocol import HashedTimePredictionSynapse, TimePredictionSynapse, PredictionSynapse
 from zeus import __version__ as zeus_version
-from zeus.validator.constants import DEFAULT_STEP_SIZE
 from zeus.validator.challenge_spec import make_state_key
-from zeus.utils.region_mask import europe_mask_for_grid
-from zeus.validator.constants import EUROPE_WEIGHT, DEFAULT_STEP_SIZE
+from zeus.validator.constants import DEFAULT_STEP_SIZE
+from zeus.utils.region_mask import REGION_CONFIGS, build_geographic_weights, OLD_REGION_CONFIGS
 
 class Era5Sample:
 
@@ -51,8 +50,9 @@ class Era5Sample:
         self.end_offset = end_offset
 
         self.x_grid = get_grid(lat_start, lat_end, lon_start, lon_end)
-        europe_mask = europe_mask_for_grid(self.x_grid)
-        self.europe_weight = torch.where(europe_mask == 1, EUROPE_WEIGHT, 1)
+        self.europe_weight = build_geographic_weights(self.x_grid, REGION_CONFIGS)
+        # TODO: Remove this once we have evaluated all the challenges before the update
+        self.old_europe_weight = build_geographic_weights(self.x_grid, OLD_REGION_CONFIGS)
 
         if output_data is not None:
             self.predict_hours = output_data.shape[0]
