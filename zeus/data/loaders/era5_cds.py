@@ -163,7 +163,7 @@ class Era5CDSLoader(Era5BaseLoader):
         variable_converter = get_converter(sample.variable)
         # ! First convert to desired unit then convert to float16 to save memory
         out = variable_converter.era5_to_target(result)
-        out = out.to(torch.float16)
+        #out = out.to(torch.float16)
         return out
 
     def get_file_name(self, variable: str, timestamp: pd.Timestamp) -> str:
