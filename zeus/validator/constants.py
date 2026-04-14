@@ -26,10 +26,10 @@ LONG_CHALLENGE = (0, 24 * 15)
 PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
     SHORT_CHALLENGE: DendriteSettings(
         forward_concurrency=13,
-        response_batch_k=26,
+        response_batch_k=13,
         attempts_per_miner=2,
         max_response_body_bytes=1024 * 1024 * 140,
-        forward_timeout=26,
+        forward_timeout=13,
     ),
     LONG_CHALLENGE: DendriteSettings(
         forward_concurrency=2,
@@ -42,7 +42,7 @@ PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
 
 # after how many percent of above it yields results
 RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be larger than window size used for ranking
-COLLUSION_PENALTY_THRESHOLD = {SHORT_CHALLENGE: 0.002, LONG_CHALLENGE: 0.00002}
+COLLUSION_PENALTY_THRESHOLD = {SHORT_CHALLENGE: 0.0004, LONG_CHALLENGE: 0.00002}
 # the corresponding ERA5 variables miners are tested on with their scoring weight
 ERA5_DATA_VARS: Dict[str, float] = {
     "2m_temperature": 0.2, 

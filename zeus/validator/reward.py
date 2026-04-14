@@ -75,7 +75,7 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
             ranks.append(inf_rank)
             continue
         if i > 0 and round(val, precision) != round(values[i-1], precision):
-            bt.logging.warning("[calculate_competition_ranks] Problem with the collusion detection!")
+            bt.logging.warning(f"[calculate_competition_ranks] Problem with the collusion detection! {val} {values[i-1]}")
             current_rank = current_rank + 1
         ranks.append(current_rank)
         
@@ -112,6 +112,7 @@ def set_errors(
             temp_tensor = None
         else:
             temp_tensor = decompress_prediction(prediction, expected_shape)
+            temp_tensor = temp_tensor.to(torch.float32)
             del prediction
             
 
