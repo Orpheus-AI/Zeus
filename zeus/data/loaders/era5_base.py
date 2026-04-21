@@ -103,6 +103,7 @@ class Era5BaseLoader(ABC):
         end_time: pd.Timestamp,
         variables: Optional[Union[str, List[str]]] = None,
         step_size: Optional[int] = None,
+        include_coords: bool = False,  # Optimization Flag
     ) -> torch.Tensor:
         """
         Get data for a location and time range. If step_size is set, time dimension
@@ -135,8 +136,11 @@ class Era5BaseLoader(ABC):
                 for var in shortcodes
             ],
             dim=-1,
-        )  # (time, lat, lon, data_vars)
-
+        )
+        
+        if not include_coords:
+            return y_grid
+        
         x_grid = torch.stack(
             torch.meshgrid(
                 *[

@@ -14,7 +14,8 @@ class ChallengeSpec:
     start_offset: int
     end_offset: int
     weight: float
-    prediction_dendrite_settings: DendriteSettings
+    topk_dendrite_settings: DendriteSettings
+    scoring_dendrite_settings: DendriteSettings
 
     @property
     def state_key(self) -> str:
@@ -24,7 +25,8 @@ class ChallengeSpec:
 def build_challenge_registry(
     era5_data_vars: Dict[str, float],
     time_window_weights: Dict[Tuple[int, int], float],
-    prediction_settings_per_window: Dict[Tuple[int, int], DendriteSettings],
+    topk_settings_per_window: Dict[Tuple[int, int], DendriteSettings],
+    scoring_settings_per_window: Dict[Tuple[int, int], DendriteSettings],
 ) -> Dict[str, ChallengeSpec]:
     """Build {state_key: ChallengeSpec} from ERA5 variables × time windows.
 
@@ -35,13 +37,15 @@ def build_challenge_registry(
     registry: Dict[str, ChallengeSpec] = {}
     for variable, total_weight in era5_data_vars.items():
          for (start_offset, end_offset), window_weight in time_window_weights.items():
-            settings = prediction_settings_per_window[(start_offset, end_offset)]
+            topk_settings = topk_settings_per_window[(start_offset, end_offset)]
+            scoring_settings = scoring_settings_per_window[(start_offset, end_offset)]
             spec = ChallengeSpec(
                 variable=variable,
                 start_offset=start_offset,
                 end_offset=end_offset,
                 weight=total_weight * window_weight,
-                prediction_dendrite_settings=settings,
+                topk_dendrite_settings=topk_settings,
+                scoring_dendrite_settings=scoring_settings,
             )
             registry[spec.state_key] = spec
     return registry

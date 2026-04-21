@@ -23,7 +23,7 @@ HASH_DENDRITE_SETTINGS = DendriteSettings(
 SHORT_CHALLENGE = (0, 48)
 LONG_CHALLENGE = (0, 24 * 15)
 # Per-window prediction dendrite settings keyed by (start_offset, end_offset)
-PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
+TOPK_PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
     SHORT_CHALLENGE: DendriteSettings(
         forward_concurrency=13,
         response_batch_k=13,
@@ -37,6 +37,23 @@ PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
         attempts_per_miner=2,
         max_response_body_bytes=1024 * 1024 * 780,
         forward_timeout=55.0,
+    ),
+}
+
+SCORING_PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] = {
+    SHORT_CHALLENGE: DendriteSettings(
+        forward_concurrency=13,
+        response_batch_k=13,
+        attempts_per_miner=2,
+        max_response_body_bytes=1024 * 1024 * 140,
+        forward_timeout=13,
+    ),
+    LONG_CHALLENGE: DendriteSettings(
+        forward_concurrency=1,
+        response_batch_k=1,
+        attempts_per_miner=2,
+        max_response_body_bytes=1024 * 1024 * 780,
+        forward_timeout=50.0,
     ),
 }
 
@@ -101,5 +118,6 @@ from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpe
 CHALLENGE_REGISTRY: Dict[str, ChallengeSpec] = build_challenge_registry(
     era5_data_vars=ERA5_DATA_VARS,
     time_window_weights=TIME_WINDOW_WEIGHTS,
-    prediction_settings_per_window=PREDICTION_SETTINGS_PER_WINDOW,
+    topk_settings_per_window=TOPK_PREDICTION_SETTINGS_PER_WINDOW,
+    scoring_settings_per_window=SCORING_PREDICTION_SETTINGS_PER_WINDOW,
 )

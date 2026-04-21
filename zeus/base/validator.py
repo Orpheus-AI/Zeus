@@ -105,14 +105,17 @@ class BaseValidatorNeuron(BaseNeuron):
         )
 
         # Prediction dendrites: one per unique DendriteSettings across all challenge windows
-        unique_settings = {spec.prediction_dendrite_settings for spec in CHALLENGE_REGISTRY.values()}
+        unique_settings = set()
+        for spec in CHALLENGE_REGISTRY.values():
+            unique_settings.add(spec.topk_dendrite_settings)
+            unique_settings.add(spec.scoring_dendrite_settings)
+            
         self.prediction_dendrites: Dict[DendriteSettings, ZeusDendrite] = {
             settings: ZeusDendrite(wallet=self.wallet, settings=settings)
             for settings in unique_settings
         }
         bt.logging.info(
-            "Dendrites: hash=%s, prediction=%d unique settings",
-            self.dendrite_hash, len(self.prediction_dendrites),
+            f"Dendrites: hash={self.dendrite_hash}, prediction={len(self.prediction_dendrites)} unique settings"
         )
 
         self.challenge_registry = CHALLENGE_REGISTRY

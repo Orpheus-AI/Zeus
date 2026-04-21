@@ -150,16 +150,17 @@ class Era5CDSLoader(Era5BaseLoader):
         end_time = to_timestamp(sample.end_timestamp)
         if end_time > self.last_stored_timestamp:
             return None
-        data4d = self.get_data(
+        result = self.get_data(
             *sample.get_bbox(),
             start_time=to_timestamp(sample.start_timestamp),
             end_time=end_time,
             variables=sample.variable,
             step_size=sample.step_size,
-        )
-        if data4d is None:
-            return None
-        result = data4d[..., 2:].squeeze(dim=-1)
+            include_coords=False
+        ).squeeze(dim=-1) # squeeze does not increase ram usage
+        # if result is None:
+        #     return None
+        # result = data4d[..., 2:].squeeze(dim=-1)
         variable_converter = get_converter(sample.variable)
         # ! First convert to desired unit then convert to float16 to save memory
         out = variable_converter.era5_to_target(result)
