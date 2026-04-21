@@ -67,22 +67,22 @@ def filter_eligible_miners_for_scoring(
 
 
 def _get_prediction_dendrite_and_settings(
-    self, sample: Era5Sample
+    self, sample: Era5Sample, phase: str
 ) -> Tuple[ZeusDendrite, DendriteSettings]:
     spec = self.challenge_registry.get(sample.state_key)
     if spec is None:
         raise ValueError(f"No ChallengeSpec for state_key={sample.state_key}")
-    settings = spec.prediction_dendrite_settings
+    settings = spec.topk_dendrite_settings if phase == "topk" else spec.scoring_dendrite_settings
     return self.prediction_dendrites[settings], settings
 
 
-async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_list: List[str], axons_to_query: List[bt.Axon]) -> List[Optional[bytes]]:
+async def fetch_predictions_and_verify_hashes(self, sample: Era5Sample, hashes_list: List[str], axons_to_query: List[bt.Axon], phase: str) -> List[Optional[bytes]]:
     """
     Handles a single batch of miners. Variables here are cleared from memory 
     once the function returns to run_single_hash_challenge.
     """
 
-    dendrite, pred_settings = _get_prediction_dendrite_and_settings(self, sample)
+    dendrite, pred_settings = _get_prediction_dendrite_and_settings(self, sample, phase)
 
     start_time = time.time()
     responses: List[TimePredictionSynapse] = await dendrite(
@@ -142,6 +142,7 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
     good_miners_data, predictions_bad_miners_data = await run_prediction_phase(
         self, sample, all_uids_to_query, hashes_from_uids_to_query,
         process_batch=_score_batch,
+        phase="scoring",
     )
 
     all_miners_data = good_miners_data + bad_miners_data + predictions_bad_miners_data
@@ -299,7 +300,6 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
 
 
     for sample in challenges:
-        # TODO : only do if a challenge is for 15 days, we do not request the other ones. 
         if sample.predict_hours <= 49:
             bt.logging.info(f"[run_initial_prediction_top_k_phases] Skipping sample {sample.state_key} because it has {sample.predict_hours} hours, not 15 days.")
             continue
@@ -337,6 +337,7 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
         good_miners_data, bad_miners_data = await run_prediction_phase(
             self, sample, uids_to_query, hashes_of_queried,
             process_batch=_save_and_free,
+            phase="topk",
         )
 
         bad_hotkeys = [miner.hotkey for miner in bad_miners_data]
@@ -355,6 +356,7 @@ async def run_prediction_phase(
     all_uids_to_query,
     hashes_from_uids_to_query,
     process_batch: Callable[[List[int], List, List[Optional[bytes]]], List[MinerData]],
+    phase: str,
 ):
     """Run prediction phase querying miners in batches and verifying their predictions.
 
@@ -379,7 +381,7 @@ async def run_prediction_phase(
     if spec is None:
         bt.logging.error(f"[run_prediction_phase] No ChallengeSpec for state_key={sample.state_key}")
         return [], []
-    settings = spec.prediction_dendrite_settings
+    settings = spec.topk_dendrite_settings if phase == "topk" else spec.scoring_dendrite_settings
     bt.logging.info(f'[run_prediction_phase] The number of all miners uids is {len(all_uids_to_query)}')
     steps_to_see_everyone_once = math.ceil(len(all_uids_to_query) / settings.response_batch_k)
 
@@ -411,7 +413,7 @@ async def run_prediction_phase(
         hashes_for_batch = [uid_to_hash.get(uid, None) for uid in miner_uids]
 
         bt.logging.debug(f"[run_prediction_phase] axons_to_query: {len(axons_to_query)} hashes :{len(hashes_from_uids_to_query)}")
-        compressed_predictions = await fetch_predictions_and_verify_hashes(self, sample, hashes_for_batch, axons_to_query)
+        compressed_predictions = await fetch_predictions_and_verify_hashes(self, sample, hashes_for_batch, axons_to_query, phase)
 
         batch_good = process_batch(miner_uids, axons_to_query, compressed_predictions)
 

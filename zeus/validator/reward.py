@@ -112,7 +112,8 @@ def set_errors(
             temp_tensor = None
         else:
             temp_tensor = decompress_prediction(prediction, expected_shape)
-            temp_tensor = temp_tensor.to(torch.float32)
+            if temp_tensor is not None:
+                temp_tensor = temp_tensor.to(torch.float32)
             del prediction
             
 
