@@ -157,9 +157,10 @@ class Era5CDSLoader(Era5BaseLoader):
             variables=sample.variable,
             step_size=sample.step_size,
             include_coords=False
-        ).squeeze(dim=-1) # squeeze does not increase ram usage
-        # if result is None:
-        #     return None
+        ) 
+        if result is None:
+            return None
+        result = result.squeeze(dim=-1) # squeeze does not increase ram usage
         # result = data4d[..., 2:].squeeze(dim=-1)
         variable_converter = get_converter(sample.variable)
         # ! First convert to desired unit then convert to float16 to save memory
