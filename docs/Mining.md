@@ -13,9 +13,6 @@
 **Be aware of the minimum compute requirements** for our subnet, detailed in [Minimum compute YAML configuration](../min_compute.yml). A GPU is required for training (unless you want to wait weeks for training to complete), but is not required for inference while running a miner.
 
 ## Installation
-_RunPod has not been updates yet : TODO_
-> [!TIP]
-> If you are using RunPod, you can use our [dedicated template](https://runpod.io/console/deploy?template=x2lktx2xex&ref=97t9kcqz) which comes pre-installed with all required dependencies! Even without RunPod the [Docker image](https://hub.docker.com/repository/docker/ericorpheus/zeus/) behind this template might still work for your usecase. If you are using this template/image, you can skip all steps below except for cloning.
 
 Download the repository and navigate to the folder.
 ```bash

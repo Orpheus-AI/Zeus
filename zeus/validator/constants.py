@@ -58,7 +58,6 @@ SCORING_PREDICTION_SETTINGS_PER_WINDOW: Dict[Tuple[int, int], DendriteSettings] 
 }
 
 # after how many percent of above it yields results
-RANK_HISTORY_PRUNE_LEN = 1000 # how many ranks to keep in history for each hotkey after that we prune note that this number can be larger than window size used for ranking
 COLLUSION_PENALTY_THRESHOLD = {SHORT_CHALLENGE: 0.0004, LONG_CHALLENGE: 0.00002}
 # the corresponding ERA5 variables miners are tested on with their scoring weight
 ERA5_DATA_VARS: Dict[str, float] = {
@@ -87,6 +86,10 @@ GERMANY_WEIGHT = 2.5
 # ------------------------------------------------------
 CURRENT_DIRECTORY: Path = Path.home()
 
+RANK_HISTORY_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "rank_history.db"
+RANK_HISTORY_PRUNE_DAYS = 365 # how many days a rank is kept in history
+RANK_HISTORY_ALLOWED_ABSENCE = 4 # the number of times a miner is alowes to be absert (i.e. not serve) before its rank history is deleted
+
 BEST_FORECASTS_DIRECTORY: Path = CURRENT_DIRECTORY  / "Zeus" / "best_prediction" 
 ERA5_CACHE_DIR: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "era5"
 OLD_METADATA_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "challenges.db"
@@ -111,6 +114,14 @@ TIME_WINDOW_WEIGHTS: Dict[Tuple[int, int], float] = {
 PERCENTAGE_GOING_TO_WINNER = 0.95
 
 PERFORMANCE_DATABASE_URL = "https://performance.zeussubnet.com"
+
+# ------------------------------------------------------
+# ------------------- Burn constants -------------------
+# ------------------------------------------------------
+BURN_UID: int = 56
+BLOCKS_TO_REQUEST_BURN: int = 160   # request burn amounts this many blocks before epoch end
+BLOCKS_TO_SET_WEIGHT: int = 80      # set weights this many blocks before epoch end
+BURN_AMOUNTS_JSON_PATH: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "burn_amounts.json"
 
 # ---- Challenge registry (variable × time-window, each with its own state_key) ----
 from zeus.validator.challenge_spec import build_challenge_registry, ChallengeSpec  # noqa: E402

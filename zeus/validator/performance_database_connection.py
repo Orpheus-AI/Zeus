@@ -1,6 +1,7 @@
 from typing import List, Optional
 import asyncio
 import threading
+import time
 import aiohttp
 import bittensor as bt
 import traceback
@@ -156,7 +157,6 @@ class PerformanceDatabaseConnection:
                 response_data = await response.json()
                 bt.logging.success(
                     f"{LOG_COLOR}[PerformanceDatabaseConnection] {success_msg} "
-                    f"Challenge ID: {response_data.get('challenge_id', 'N/A')} "
                     f"| Info: {response_data}{LOG_COLOR_RESET}"
                 )
                 return response_data
@@ -164,6 +164,31 @@ class PerformanceDatabaseConnection:
                 error_detail = await response.text()
                 bt.logging.warning(f"{LOG_COLOR}[PerformanceDatabaseConnection] API returned status {response.status}: {error_detail}{LOG_COLOR_RESET}")
                 return None
+
+# --------------------------  Burn amounts --------------------------
+    def fetch_burn_amounts_sync(self, retries: int = 3, retry_delay: float = 3.0, timeout: float = 30.0) -> Optional[list]:
+        """
+        Synchronously fetch burn amounts from /get_burn_amounts (signed POST).
+
+        Retries up to `retries` times with `retry_delay` seconds between attempts.
+        Returns the parsed JSON list on success, or None if all attempts fail.
+        """
+        for attempt in range(1, retries + 1):
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._send_signed_request("get_burn_amounts", {}, "Successfully fetched burn amounts."),
+                    self._loop,
+                )
+                result = future.result(timeout=timeout)
+                if result is not None:
+                    return result
+                bt.logging.warning(f"{LOG_COLOR}[PerformanceDatabaseConnection] get_burn_amounts attempt {attempt}/{retries} returned no data.{LOG_COLOR_RESET}")
+            except Exception as e:
+                bt.logging.warning(f"{LOG_COLOR}[PerformanceDatabaseConnection] get_burn_amounts attempt {attempt}/{retries} error: {e}{LOG_COLOR_RESET}")
+            if attempt < retries:
+                time.sleep(retry_delay)
+        bt.logging.error(f"{LOG_COLOR}[PerformanceDatabaseConnection] All {retries} attempts to fetch burn amounts failed.{LOG_COLOR_RESET}")
+        return None
 
 # --------------------------  Log functions --------------------------
     def log_scores(self, sample: Era5Sample, miners_data: List[MinerData]):

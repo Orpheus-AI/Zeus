@@ -118,7 +118,12 @@ pm2 start run_neuron.py -- --validator
 - Auto updates are enabled by default. To disable, run with `--no-auto-update`.
 - Self-healing restarts are disabled by default (every 3 hours). To enable, run with `--self-heal`.
 
+> [Note]
+> If you experience problems with v-trust and your validator can't connect to the performence endpoint [constants -> PERFORMANCE_DATABASE_URL](../zeus/validator/constants.py), then please reach out to the team at Ørpheus A.I. via Discord!. 
+
 ### Validator phases (forward pass) 
+
+
 
 The validator uses a **commit–reveal** flow so miners cannot copy others’ answers. The logic is in [forward.py](../zeus/validator/forward.py). Each forward pass can run one or more of these phases, depending on the current time and chain state.
 

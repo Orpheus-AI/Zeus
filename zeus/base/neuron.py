@@ -128,8 +128,7 @@ class BaseNeuron(ABC):
         # Ensure miner or validator hotkey is still registered on the network.
         self.sync_without_weights()
 
-        if self.should_set_weights():
-            self.set_weights()
+        
 
     def check_registered(self):
         # --- Check for registration.
@@ -151,25 +150,6 @@ class BaseNeuron(ABC):
             self.block - self.metagraph.last_update[self.uid]
         ) > self.config.neuron.epoch_length
 
-    def should_set_weights(self) -> bool:
-        # Don't set weights if you are a miner
-        if self.neuron_type == "MinerNeuron":
-            return False
-        
-        # Don't set weights on initialization.
-        if self.step == 0:
-            bt.logging.warning(f' step = 0')
-            return False
-
-        # if self.config.neuron.disable_set_weights: # this is set to True in the defalut settings
-        #     return False
-        last_update = self.metagraph.last_update[self.uid].item()
-        blocks_since_lat_update =  self.block - last_update
-        UPDATE_EVERY_N_BLOCKS = 5 * 60 * 12
-        bt.logging.debug(f"blocks_since_lat_update: {blocks_since_lat_update} current block: {self.block} last_update: {last_update}")
-  
-        # Define appropriate logic for when set weights.
-        return blocks_since_lat_update > UPDATE_EVERY_N_BLOCKS
 
     def save_state(self):
         bt.logging.trace(

@@ -75,8 +75,9 @@ def calculate_competition_ranks(values: list[float], precision: int = 10) -> lis
             ranks.append(inf_rank)
             continue
         if i > 0 and round(val, precision) != round(values[i-1], precision):
-            bt.logging.warning(f"[calculate_competition_ranks] Problem with the collusion detection! {val} {values[i-1]}")
             current_rank = current_rank + 1
+        else : 
+            bt.logging.warning(f"[calculate_competition_ranks] Problem with the collusion detection!")
         ranks.append(current_rank)
         
     return ranks
@@ -112,7 +113,7 @@ def set_errors(
             temp_tensor = None
         else:
             temp_tensor = decompress_prediction(prediction, expected_shape)
-            if temp_tensor is not None:
+            if temp_tensor is not None: 
                 temp_tensor = temp_tensor.to(torch.float32)
             del prediction
             
@@ -196,28 +197,22 @@ def set_rewards(
 
     return sorted_miners
 
-def compute_min_rank_weights(
-    metagraph_size: int,
+def compute_avg_ranks(
     hotkeys: List[str],
     uids: List[int],
     rank_history: Dict[str, List[float]],
     window_size: int,
     miners_hotkeys: List[str],
-) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+) -> List[Dict[str, Any]]:
     """
-    Computes weights by
-    1) calculating a rank for each hotkey by taking the average of their last window_size ranks from rank_history
+    Calculates a rank for each hotkey by taking the average of their last window_size ranks from rank_history
      - if a hotkey doesn't have a rank history we give it a rank infinity.
-    2) giving PERCENTAGE_GOING_TO_WINNER of the weight to the first one and logarithmically to the rest.
-    3) break ties based on the latest ranks.
 
     Each miners_metadata entry includes fields for the performance DB API: rank (mean over window or None),
     miner_window (window_size or 0). Pass the list to log_rank_aggregates with the ERA5 variable name.
 
     Returns
     -------
-    weights : np.ndarray
-        Weight vector of shape (metagraph_size,) with PERCENTAGE_GOING_TO_WINNER going to the "best" miner.
     miners_metadata : list of dict
         Payload for log_rank_aggregates (variable, miner_hotkey, rank, miner_window).
     """
@@ -251,11 +246,19 @@ def compute_min_rank_weights(
     # Lower rank is better, so we sort by (avg_rank, tie_breaker)
     # tie_breaker is a tuple of ranks from most recent to oldest, so tuple comparison works correctly
     miners_metadata.sort(key=lambda x: (x['avg_rank'], x['tie_breaker']))
-    
-    
+    return miners_metadata
+
+def calculate_challenge_weights(
+    miners_metadata: List[Dict[str, Any]],
+    metagraph_size: int,
+) -> np.ndarray:
     # Step 3: Assign weights
     weights = np.zeros(metagraph_size)
-        
+
+    if not miners_metadata:
+        bt.logging.warning("[calculate_challenge_weights] No eligible miners found; returning zero weights.")
+        return weights
+
     # Best miner gets PERCENTAGE_GOING_TO_WINNER
     best_uid = miners_metadata[0]['uid']
     bt.logging.debug(f"The best miner has uid : {best_uid}") 
@@ -288,7 +291,7 @@ def compute_min_rank_weights(
                 uid = miner_data['uid']
                 weights[uid] = equal_weight
     
-    return weights, miners_metadata
+    return weights
 
 
 def complete_challenge(
@@ -314,7 +317,9 @@ def complete_challenge(
     self.update_scores(
         [miner.score for miner in miners_data],
         [miner.hotkey for miner in miners_data],
+        [miner.shape_penalty for miner in miners_data],
         sample.state_key,
+        sample.end_timestamp,
     )
     
     bt.logging.success(f"Scored stored challenges for uids: {[miner.uid for miner in miners_data]}")
@@ -351,6 +356,5 @@ def calculate_rmses(self, sample, miner_uids, axons_to_query, compressed_predict
     # Introduce a delay to prevent spamming requests
     time.sleep(10) #max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
     return good_miners_list
-
 
 
