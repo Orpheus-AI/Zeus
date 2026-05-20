@@ -14,7 +14,6 @@ from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.validator import BaseValidatorNeuron
 from zeus.data.sample import Era5Sample
 from zeus.protocol import TimePredictionSynapse
-from zeus.utils.compression import decompress_prediction
 from zeus.utils.time import to_timestamp
 from zeus.validator.miner_data import MinerData
 from zeus.validator.responses_processing import (

@@ -3,7 +3,6 @@ import asyncio
 import json
 import pathlib
 import sqlite3
-import time
 from typing import Callable, List, Set, Tuple
 
 import bittensor as bt
@@ -21,6 +20,15 @@ import os
 import numpy as np
 import xarray as xr
 
+
+def get_metadata_db_connection(db_path: pathlib.Path):
+    # maybe the set_weight thread will access it so we need to make it thread safe
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;") 
+    conn.execute("PRAGMA busy_timeout=30000;")
+    return conn
+
+
 def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_random: bool, best_10_hotkeys: list[str]):
     # this is for the proxy to save the best miner prediction after the hash phase is done!
 
@@ -34,6 +42,10 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     correct_shape = torch.Size((sample.predict_hours,) + tuple(sample.x_grid.shape[:2]))
 
     prediction = decompress_prediction(miner.prediction, correct_shape)
+
+    if prediction is None:
+        bt.logging.warning(f"Decompressed predictions for miner uid {miner.uid} are None, likely due to shape mismatch.")
+        return
     
     # Create subdirectory for the variable if it doesn't exist
     if not os.path.exists(self.best_predictions_path):
@@ -43,12 +55,6 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     variable_folder = os.path.join(self.best_predictions_path, variable_name)
     os.makedirs(variable_folder, exist_ok=True)
 
-    if prediction is None:
-        bt.logging.warning(f"[save_best_miner_prediction] Prediction is None for miner {miner.uid} {miner.hotkey}")
-        return
-
-
-    
     time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
 
     xr_dataarray = xr.DataArray(
@@ -102,7 +108,7 @@ class OptimizedWeatherStorage:
         return False
 
     def _create_tables(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with get_metadata_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS challenges (
@@ -182,7 +188,7 @@ class OptimizedWeatherStorage:
             bt.logging.warning(f"get_hashing_data_for_sample: No challenge found for sample at {sample.start_timestamp}")
             return [], []
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             # Standard JOIN ensures we only get miners who actually have a hash record
@@ -226,7 +232,7 @@ class OptimizedWeatherStorage:
         bt.logging.debug(
             f"_find_challenge_id: querying challenges with bbox={sample.get_bbox()}, start={to_timestamp(sample.start_timestamp)}, end={to_timestamp(sample.end_timestamp)}, hours={sample.predict_hours}, variable={sample.variable}"
         )
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             cursor.execute(
@@ -254,7 +260,7 @@ class OptimizedWeatherStorage:
         bt.logging.debug(
             f"_insert_challenge: inserting challenge bbox={sample.get_bbox()}, start={to_timestamp(sample.start_timestamp)}, end={to_timestamp(sample.end_timestamp)}, hours={sample.predict_hours}"
         )
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             cursor.execute(
@@ -292,7 +298,7 @@ class OptimizedWeatherStorage:
 
         Returns boolean whether the insertion was successful
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
 
@@ -331,7 +337,7 @@ class OptimizedWeatherStorage:
 
         Returns boolean whether the insertion was successful
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             bt.logging.debug(f"[_insert_hotkeys] For challenge {challenge_uid} inserting infor for {miner_uids}")
             cursor = conn.cursor()
@@ -366,7 +372,7 @@ class OptimizedWeatherStorage:
             bt.logging.debug("_punish_miner: no hotkeys provided, nothing to update")
             return True
         
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             # In the table challenge_hotkey_map update all the miners with hotkey in hotkeys for challenge_uid good_miner = 0
@@ -405,7 +411,7 @@ class OptimizedWeatherStorage:
         Return all the hotkeys for a given challenge for good/bad miners
         """
         bt.logging.debug(f"_get_hotkeys_and_uids_for_challenge: challenge_uid={challenge_uid}, good_miners={good_miners}")
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             cursor.execute("""
@@ -432,7 +438,7 @@ class OptimizedWeatherStorage:
         """
         Get the hotkeys of all the miners that have responded to at least one challenge
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
             
@@ -459,7 +465,7 @@ class OptimizedWeatherStorage:
         )
 
         # Fetch and CLOSE the connection immediately
-        with sqlite3.connect(self.db_path) as conn:
+        with get_metadata_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT * FROM challenges WHERE end_timestamp <= ?;",
@@ -476,7 +482,6 @@ class OptimizedWeatherStorage:
             try:
                 start_offset, end_offset = offsets_from_predict_hours(hours, TIME_WINDOWS_PER_CHALLENGE)
             except ValueError:
-                # TODO check currently in the competition if same amount of hours
                 bt.logging.warning(
                     f"score_and_prune: challenge {c_uid} has hours_to_predict={hours} "
                     f"that doesn't match any current window, deleting"
@@ -508,7 +513,7 @@ class OptimizedWeatherStorage:
                 continue
 
             # First get the good miners from the SQL database
-            with sqlite3.connect(self.db_path) as conn:
+            with get_metadata_db_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -538,7 +543,7 @@ class OptimizedWeatherStorage:
             self._delete_challenge(c_uid)
 
             # don't score miners too quickly in succession and always wait after last scoring
-            time.sleep(1)
+            await asyncio.sleep(1)
 
         bt.logging.warning(f"score_and_prune: completed {len(challenges)} challenges")
         return len(challenges) > 0
@@ -546,7 +551,7 @@ class OptimizedWeatherStorage:
     def _delete_challenge(self, challenge_uid: int):
         """Cleanup the SQLite"""
         bt.logging.warning(f"_delete_challenge: starting for challenge_uid={challenge_uid}")
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
 
@@ -570,7 +575,7 @@ class OptimizedWeatherStorage:
         # hotkeys_set = set(hotkeys)
         challenge_uid_for_deletion = []
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_metadata_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
 

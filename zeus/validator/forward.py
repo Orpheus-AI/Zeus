@@ -18,8 +18,8 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
+import asyncio
 from functools import partial
-from typing import List
 
 import bittensor as bt
 from copy import deepcopy
@@ -53,10 +53,7 @@ async def forward(self: BaseValidatorNeuron):
         self.challenges = data_loader.get_challenge_samples()
         bt.logging.info(f"Requesting hashes from all miners for {len(self.challenges)} challenges")
         await run_all_hash_phases(self, self.challenges)
-    if not data_loader.is_ready():
-        bt.logging.info("Data loader is not ready yet... Waiting until ERA5 data is downloaded.")
-        time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
-        return
+    
     if self.time_scheduler.is_query_best_time():
     # Note : because the challenge starts at .floor('6h') of the time now, that means that at is_hash_commit_time and at is_query_best_time the same challenge would be returned
         bt.logging.info("Requesting unhashed predictions from top k miners or random ones")
@@ -64,17 +61,19 @@ async def forward(self: BaseValidatorNeuron):
         previous_hotkeys2uids = {hotkey: uid for uid, hotkey in enumerate(previous_metagraph.hotkeys)}
         self.resync_metagraph()
         await run_initial_prediction_top_k_phases(self, self.challenges, previous_hotkeys2uids)
-
-    # based on the block and the readiness of the database, we decide if we should try to see if any challenges are ready for scoring 
-    need_to_set_weights = False
+    if not data_loader.is_ready():
+        bt.logging.info("Data loader is not ready yet... Waiting until ERA5 data is downloaded.")
+        await asyncio.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
+        return
+    # based on the block and the readiness of the database, we decide if we should try to see if any challenges are ready for scoring
     if self.database.should_score():
         bt.logging.info("Potentially scoring stored predictions for live ERA5 data.")
-        self.resync_metagraph() 
-        need_to_set_weights = await self.database.score_and_prune(score_func=partial(run_final_prediction_phase, self))
-    if need_to_set_weights or self.should_set_weights():
-        self.set_weights()
-
-    time.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
+        self.resync_metagraph()
+        need_to_set_weights = await self.database.score_and_prune(
+            score_func=partial(run_final_prediction_phase, self)
+        )
+   
+    await asyncio.sleep(max(0, FORWARD_DELAY_SECONDS - (time.time() - start_forward)))
         
 
             

@@ -7,6 +7,23 @@ from typing import Set
 ZEUS_V2_REGISTRATION_CUTOFF_UTC = pd.Timestamp("2026-03-17 18:00:00", tz="UTC")
 SECONDS_PER_BLOCK = 12
 
+
+def find_miners(metagraph: "bt.metagraph.Metagraph", vpermit_tao_limit: int, mainnet_uid: int, current_block: int):
+    # TODO duplicated in weight_setter.py
+    miners_hotkeys = []
+    miners_uids = []
+    for uid,hotkey in zip(metagraph.uids, metagraph.hotkeys):
+        
+        available = check_uid_availability(metagraph, uid, vpermit_tao_limit, mainnet_uid)
+        reg_block = metagraph.block_at_registration[uid]
+        is_registered_after_v2 = is_registered_after_release_zeus_v2(reg_block, current_block)
+        if available and is_registered_after_v2:
+            miners_hotkeys.append(hotkey)
+            miners_uids.append(uid)
+
+    return miners_hotkeys, miners_uids
+
+
 def check_uid_availability(
     metagraph: "bt.metagraph.Metagraph",
     uid: int,
