@@ -9,7 +9,7 @@ SECONDS_PER_BLOCK = 12
 
 
 def find_miners(metagraph: "bt.metagraph.Metagraph", vpermit_tao_limit: int, mainnet_uid: int, current_block: int):
-    # TODO duplicated in weight_setter.py
+  
     miners_hotkeys = []
     miners_uids = []
     for uid,hotkey in zip(metagraph.uids, metagraph.hotkeys):
@@ -54,7 +54,7 @@ def check_uid_availability(
 
 
 
-#def is_registered_after_release_zeus_v2(self, uid : int):
+
 def is_registered_after_release_zeus_v2(reg_block: int, current_block: int) -> bool:
     """
     This functions gets a uid and hotkey and checks is the neuron was registered before the release of the new subnet version

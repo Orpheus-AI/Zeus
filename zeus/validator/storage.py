@@ -56,6 +56,8 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
     os.makedirs(variable_folder, exist_ok=True)
 
     time_coords = pd.date_range(start_time_timestamp, end_time_timespamp, freq=f"{sample.step_size}h")
+    rank = f"{best_10_hotkeys.index(miner.hotkey)+1}" if miner.hotkey in best_10_hotkeys else "unknown"
+    randomness_tag = "random" if is_random else f"rank_{rank}" 
 
     xr_dataarray = xr.DataArray(
         data = prediction.to(dtype=torch.float32).numpy(), 
@@ -64,12 +66,19 @@ def save_best_miner_prediction(self, sample : Era5Sample, miner : MinerData, is_
             time = time_coords,
             latitude = np.arange(sample.lat_start, sample.lat_end+0.25, 0.25), 
             longitude = np.arange(sample.lon_start, sample.lon_end+0.25, 0.25)
-        ))
+        ),
+        attrs={
+            "miner_hotkey": miner.hotkey,
+            "rank": randomness_tag,
+            "prediction_hash": miner.prediction_hash or "",
+            "block_hash_committed_at": miner.block_hash_committed_at
+            if miner.block_hash_committed_at is not None
+            else "",
+        },
+    )
     
     del prediction
     
-    rank = f"{best_10_hotkeys.index(miner.hotkey)+1}" if miner.hotkey in best_10_hotkeys else "unknown"
-    randomness_tag = "random" if is_random else f"rank_{rank}" 
     filename = f"{start_time_str}-{end_time_str}-S{sample.step_size}_miner_{miner.hotkey}_{randomness_tag}.nc"
     filepath = os.path.join(variable_folder, filename)
     # Convert DataArray to Dataset with the variable name set to the sample.variable
@@ -142,10 +151,20 @@ class OptimizedWeatherStorage:
                     miner_uid TEXT,
                     challenge_uid INTEGER,
                     hash TEXT,
+                    block_hash_committed_at INTEGER DEFAULT NULL,
                     FOREIGN KEY (challenge_uid) REFERENCES challenges (uid)
                 );
                 """
             )
+            cursor.execute("PRAGMA table_info(hash_responses);")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "block_hash_committed_at" not in columns:
+                cursor.execute(
+                    """
+                    ALTER TABLE hash_responses
+                    ADD COLUMN block_hash_committed_at INTEGER DEFAULT NULL;
+                    """
+                )
             conn.commit()
             bt.logging.debug("Created/verified SQLite tables: challenges, challenge_hotkey_map, hash_responses")
 
@@ -159,7 +178,7 @@ class OptimizedWeatherStorage:
             boolean : whether the insertion was successful
         """
 
-        challenge_uid = self._find_challenge_id(sample)
+        challenge_uid = self.find_challenge_id(sample)
         if challenge_uid is not None:
             bt.logging.debug(f"insert: found existing challenge_uid={challenge_uid}")
         else:
@@ -177,16 +196,16 @@ class OptimizedWeatherStorage:
             bt.logging.warning(f"insert: _insert_hash_responses failed for challenge_uid={challenge_uid}")
         return success
      
-    def get_hashing_data_for_sample(self, sample: Era5Sample) -> Tuple[List[str], List[str]]:
+    def get_hashing_data_for_sample(self, sample: Era5Sample) -> Tuple[List[str], List[str], List[int | None]]:
         """
         Given a sample, find the corresponding challenge and return 
-        the hashes, hotkeys, and uids of miners who submitted a hash.
+        the hashes, hotkeys, and committed blocks of miners who submitted a hash.
         """
-        challenge_uid = self._find_challenge_id(sample)
+        challenge_uid = self.find_challenge_id(sample)
         
         if challenge_uid is None:
             bt.logging.warning(f"get_hashing_data_for_sample: No challenge found for sample at {sample.start_timestamp}")
-            return [], []
+            return [], [], []
 
         conn = get_metadata_db_connection(self.db_path)
         try:
@@ -195,7 +214,8 @@ class OptimizedWeatherStorage:
             cursor.execute("""
                 SELECT 
                     hash, 
-                    miner_hotkey
+                    miner_hotkey,
+                    block_hash_committed_at
                 FROM hash_responses 
                 WHERE challenge_uid = ?;
             """, (challenge_uid,))
@@ -203,20 +223,21 @@ class OptimizedWeatherStorage:
             results = cursor.fetchall()
             
             if not results:
-                return [], []
+                return [], [], []
 
             hashes = [r[0] for r in results]
             hotkeys = [r[1] for r in results]
+            committed_blocks = [r[2] for r in results]
 
-            return hashes, hotkeys
+            return hashes, hotkeys, committed_blocks
 
         except Exception as e:
             bt.logging.error(f"get_hashing_data_for_sample: Failed to retrieve data — {e}")
-            return [], []
+            return [], [], []
         finally:
             conn.close()
 
-    def _find_challenge_id(self, sample: Era5Sample):
+    def find_challenge_id(self, sample: Era5Sample):
         """
         Check if a challenge matching the sample already exists in the database.
         Returns the challenge_uid if found, None otherwise.
@@ -226,11 +247,10 @@ class OptimizedWeatherStorage:
             sample.start_timestamp,
             sample.end_timestamp,
             sample.predict_hours,
-            sample.query_timestamp,
             sample.variable,
         )
         bt.logging.debug(
-            f"_find_challenge_id: querying challenges with bbox={sample.get_bbox()}, start={to_timestamp(sample.start_timestamp)}, end={to_timestamp(sample.end_timestamp)}, hours={sample.predict_hours}, variable={sample.variable}"
+            f"find_challenge_id: querying challenges with bbox={sample.get_bbox()}, start={to_timestamp(sample.start_timestamp)}, end={to_timestamp(sample.end_timestamp)}, hours={sample.predict_hours}, variable={sample.variable}"
         )
         conn = get_metadata_db_connection(self.db_path)
         try:
@@ -240,15 +260,15 @@ class OptimizedWeatherStorage:
                 SELECT uid FROM challenges 
                 WHERE lat_start = ? AND lat_end = ? AND lon_start = ? AND lon_end = ?
                 AND start_timestamp = ? AND end_timestamp = ?
-                AND hours_to_predict = ? AND inserted_at = ? AND variable = ?;
+                AND hours_to_predict = ? AND variable = ?;
                 """,
                 params,
             )
             result = cursor.fetchone()
             if result:
-                bt.logging.debug(f"_find_challenge_id: found challenge_uid={result[0]}")
+                bt.logging.debug(f"find_challenge_id: found challenge_uid={result[0]}")
                 return result[0]
-            bt.logging.debug("_find_challenge_id: no matching challenge found")
+            bt.logging.debug("find_challenge_id: no matching challenge found")
             return None
         finally:
             conn.close()
@@ -310,13 +330,25 @@ class OptimizedWeatherStorage:
                 hotkeys.append(miner.hotkey)
                 miner_uids.append(miner.uid)
                 if good_miners:
-                    data_to_insert.append((miner.hotkey, miner.uid, challenge_uid, miner.prediction_hash))
+                    data_to_insert.append((
+                        miner.hotkey,
+                        miner.uid,
+                        challenge_uid,
+                        miner.prediction_hash,
+                        miner.block_hash_committed_at,
+                    ))
 
             if good_miners:
                 cursor.executemany(
                     """
-                    INSERT INTO hash_responses (miner_hotkey, miner_uid, challenge_uid, hash)
-                    VALUES (?, ?, ?, ?);
+                    INSERT INTO hash_responses (
+                        miner_hotkey,
+                        miner_uid,
+                        challenge_uid,
+                        hash,
+                        block_hash_committed_at
+                    )
+                    VALUES (?, ?, ?, ?, ?);
                     """,
                     data_to_insert,
                 )
@@ -363,7 +395,7 @@ class OptimizedWeatherStorage:
         Return bool whether the insertion was successful
         """
 
-        challenge_uid = self._find_challenge_id(sample)
+        challenge_uid = self.find_challenge_id(sample)
         if not challenge_uid:
             bt.logging.error("_punish_miner: no challenge_uid was found for this sample")
             return False
@@ -464,7 +496,7 @@ class OptimizedWeatherStorage:
             f"score_and_prune: starting, latest_available={to_timestamp(latest_available)}"
         )
 
-        # Fetch and CLOSE the connection immediately
+        # Fetch and CLOSE the connection immediately — pending challenges only
         with get_metadata_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -473,7 +505,7 @@ class OptimizedWeatherStorage:
             )
             challenges = cursor.fetchall()
 
-        bt.logging.warning(f"score_and_prune: found {len(challenges)} challenges with end_timestamp <= {to_timestamp(latest_available)}")
+        bt.logging.warning(f"score_and_prune: found {len(challenges)} pending challenges with end_timestamp <= {to_timestamp(latest_available)}")
 
         for chal in challenges:
             bt.logging.warning(f"score_and_prune: chal: {chal}")
@@ -482,6 +514,7 @@ class OptimizedWeatherStorage:
             try:
                 start_offset, end_offset = offsets_from_predict_hours(hours, TIME_WINDOWS_PER_CHALLENGE)
             except ValueError:
+                # TODO check currently in the competition if same amount of hours
                 bt.logging.warning(
                     f"score_and_prune: challenge {c_uid} has hours_to_predict={hours} "
                     f"that doesn't match any current window, deleting"
@@ -517,7 +550,9 @@ class OptimizedWeatherStorage:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT * FROM hash_responses WHERE challenge_uid = ?;
+                    SELECT miner_hotkey, miner_uid, hash
+                    FROM hash_responses
+                    WHERE challenge_uid = ?;
                     """,
                     (c_uid,),
                 )
@@ -525,7 +560,7 @@ class OptimizedWeatherStorage:
 
                 miner_hotkeys = [r[0] for r in responses]
                 miner_uids = [int(r[1]) for r in responses]
-                hashes = [r[3] for r in responses]
+                hashes = [r[2] for r in responses]
 
 
             # then get the bad miners with empty hashes

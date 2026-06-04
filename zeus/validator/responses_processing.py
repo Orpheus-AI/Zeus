@@ -9,6 +9,7 @@ from zeus.utils.hash import prediction_hash
 from zeus.validator.miner_data import MinerData
 
 
+
 def _verify_hashes(axons, compressed_predictions: List[bytes], hashes_list: List[str]) -> List[bool]:
     """Verify that compressed predictions match their committed hashes.
     
@@ -70,10 +71,12 @@ def create_compressed_predictions(responses: List[TimePredictionSynapse]) -> Lis
 def _build_bad_miners_data(
     self: BaseValidatorNeuron,
     uids: set[int],
+    metagraph = None,
 ) -> List[MinerData]:
     """Build MinerData for miners that did not respond (no prediction)."""
+    mg = metagraph if metagraph is not None else self.metagraph
     miners_data = [
-        MinerData(uid=uid, hotkey=self.metagraph.axons[uid].hotkey, prediction=None, shape_penalty=True)
+        MinerData(uid=uid, hotkey=mg.axons[uid].hotkey, prediction=None, shape_penalty=True)
         for uid in uids
     ]
     return miners_data

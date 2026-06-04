@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 import asyncio
 import threading
 import time
@@ -9,8 +9,6 @@ import math
 import subprocess
 from zeus.validator.miner_data import MinerData
 from zeus.data.sample import Era5Sample
-from zeus.protocol import HashedTimePredictionSynapse
-
 LOG_COLOR = "\033[1;35m"
 LOG_COLOR_RESET = "\033[0m"
 
@@ -306,39 +304,53 @@ class PerformanceDatabaseConnection:
             error_traceback = traceback.format_exc()
             bt.logging.error(f"{LOG_COLOR}[PerformanceDatabaseConnection] Error in _log_rank_aggregates_async ({error_type}): {e}\nTraceback:\n{error_traceback}{LOG_COLOR_RESET}")
 
-    def log_hash_responses_info(self, sample: Era5Sample, requested_at: float, responses: List[HashedTimePredictionSynapse], all_queried_uid: List[int], queried_miners_corresponding_attempts: List[int], successful_uids: List[int]):
+    def log_hash_responses_info(
+        self,
+        sample: Era5Sample,
+        requested_at: float,
+        all_queried_uid: List[int],
+        successful_uids: List[int],
+        committed_at_by_uid: Dict[int, int],
+    ):
         """
-        Log hash responses info to the API.
-        
-        Parameters:
-            sample: Era5Sample - The challenge/sample data
-            requested_at: float - Timestamp when the request was sent
-            responses: List[HashedTimePredictionSynapse] - The responses from miners
-            all_queried_uid: List[int] - UIDs of all queried miners
-            queried_miners_corresponding_attempts: List[int] - Attempt numbers for each queried miner
-            successful_uids: List[int] - UIDs of miners that successfully responded
+        Log hash-phase outcomes to the API (chain read: one row per eligible miner).
         """
         try:
             bt.logging.info(f"{LOG_COLOR}[PerformanceDatabaseConnection] Trying to log hash responses info to the performance database.{LOG_COLOR_RESET}")
-            self._fire_and_forget(self._log_hash_responses_info_async(sample, requested_at, responses, all_queried_uid, queried_miners_corresponding_attempts, successful_uids))
+            self._fire_and_forget(
+                self._log_hash_responses_info_async(
+                    sample,
+                    requested_at,
+                    all_queried_uid,
+                    successful_uids,
+                    committed_at_by_uid,
+                )
+            )
         except Exception as e:
             bt.logging.error(f"{LOG_COLOR}[PerformanceDatabaseConnection] Failed to schedule hash responses info logging: {e}. {LOG_COLOR_RESET}")
 
-    async def _log_hash_responses_info_async(self, sample: Era5Sample, requested_at: float, responses: List[HashedTimePredictionSynapse], all_queried_uid: List[int], queried_miners_corresponding_attempts: List[int], successful_uids: List[int]):
+    async def _log_hash_responses_info_async(
+        self,
+        sample: Era5Sample,
+        requested_at: float,
+        all_queried_uid: List[int],
+        successful_uids: List[int],
+        committed_at_by_uid: Dict[int, int],
+    ):
         """
         Async implementation of log_hash_responses_info method.
         """
         try:
             challenge_data = self._get_challenge_data(sample)
-            
+            attempt_number = 0
+            successful_set = set(successful_uids)
             # Prepare hash responses info
             hash_responses_info = []
-            for i, uid in enumerate(all_queried_uid):
-                # Safely get response time if available
-                response_time = float(responses[i].dendrite.process_time) if i < len(responses) and responses[i].dendrite.process_time else 0.0
-                attempt_number = queried_miners_corresponding_attempts[i] if i < len(queried_miners_corresponding_attempts) else 0
-                successful_attempt = uid in successful_uids
-                
+            for uid in all_queried_uid:
+                successful_attempt = uid in successful_set
+                committed_at = committed_at_by_uid.get(uid)
+                response_time = float(committed_at) if committed_at is not None else 0.0
+
                 hash_responses_info.append({
                     "miner_uid": uid,
                     "queried_at": requested_at,

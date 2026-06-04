@@ -316,8 +316,8 @@ class BaseMinerNeuron(BaseNeuron):
 
         Otherwise, allow the request to be processed further.
         """
-        # #TODO put back old code here
-        # return False, "ok"
+     
+       
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return True, "Missing dendrite or hotkey"
