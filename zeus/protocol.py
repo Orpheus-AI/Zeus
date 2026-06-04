@@ -141,18 +141,3 @@ class TimePredictionSynapse(PredictionSynapse):
         except Exception:
             return torch.tensor([])
 
-    
-
-class HashedTimePredictionSynapse(PredictionSynapse):
-    """
-    Hash-commitment round: same request as PredictionSynapse.
-    Response: miner sets hash = sha256(compressed_predictions + hotkey).hexdigest().
-    """
-
-    # Response field: miner sets this (frozen=False).
-    hash: Optional[str] = Field(
-        title="hash",
-        description="sha256(compressed_predictions + miner hotkey).hexdigest()",
-        default=None,
-        frozen=False,
-    )
