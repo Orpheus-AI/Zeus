@@ -22,10 +22,12 @@ import copy
 import json
 import os
 import sys
+import time
 import threading
 from abc import abstractmethod
+from datetime import timedelta
 from traceback import format_exception
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Set, Union
 
 import bittensor as bt
 import numpy as np
@@ -34,12 +36,12 @@ from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.utils.config import add_validator_args
 from zeus.utils.results_state import ResultsState, load_state, migrate_state_to_db, init_result_state_db, prune_rank_database
-from zeus.utils.uids import check_uid_availability, is_registered_after_release_zeus_v2 as is_after_zeus_v2_cutoff
+from zeus.utils.uids import is_registered_after_release_zeus_v2 as is_after_zeus_v2_cutoff
 from zeus.validator.constants import (
-    BURN_UID,
     CHALLENGE_REGISTRY,
-    HASH_DENDRITE_SETTINGS,
+    BURN_UID
 )
+
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -73,11 +75,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self.loop = asyncio.get_event_loop()
         self.challenges = []
 
-        # Hash dendrite (single, shared across all challenges)
-        self.dendrite_hash = ZeusDendrite(
-            wallet=self.wallet,
-            settings=HASH_DENDRITE_SETTINGS,
-        )
+  
 
         # Prediction dendrites: one per unique DendriteSettings across all challenge windows
         unique_settings = set()
@@ -90,7 +88,7 @@ class BaseValidatorNeuron(BaseNeuron):
             for settings in unique_settings
         }
         bt.logging.info(
-            f"Dendrites: hash={self.dendrite_hash}, prediction={len(self.prediction_dendrites)} unique settings"
+            f"Dendrites: prediction={len(self.prediction_dendrites)} unique settings"
         )
 
         self.challenge_registry = CHALLENGE_REGISTRY
@@ -210,6 +208,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+
             self.is_running = True
             bt.logging.debug("Started")
 

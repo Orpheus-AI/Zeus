@@ -4,7 +4,7 @@ import time
 import bittensor as bt
 from zeus.utils.coordinates import get_grid
 from zeus.utils.time import to_timestamp
-from zeus.protocol import HashedTimePredictionSynapse, TimePredictionSynapse, PredictionSynapse
+from zeus.protocol import TimePredictionSynapse, PredictionSynapse
 from zeus import __version__ as zeus_version
 from zeus.validator.challenge_spec import make_state_key
 from zeus.validator.constants import DEFAULT_STEP_SIZE

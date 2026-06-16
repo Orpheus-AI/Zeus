@@ -107,7 +107,16 @@ There are 4 forecast rounds per day, anchored at 00:30, 06:30, 12:30, and 18:30 
   - **Short-term:** 49 hourly steps from the current hour (t=0) through **+48 hours** (`requested_hours == 49`).
   - **Long-term:** 361 hourly steps from the current hour through **+360 hours** (15 days, `requested_hours == 361`).
 
-Each challenge focuses on a single variable. Supported variables and weights (each split across both horizons) are defined in [constants](../zeus/validator/constants.py) (e.g. 2 m temperature, 100 m wind components, surface solar radiation downwards).
+Each challenge focuses on a single variable. Supported variables and variable weights are defined in [constants](../zeus/validator/constants.py):
+
+| Variable | Weight |
+|----------|--------|
+| `2m_temperature` | 0.2 |
+| `100m_u_component_of_wind` | 0.3 |
+| `100m_v_component_of_wind` | 0.3 |
+| `surface_solar_radiation_downwards` | 0.2 |
+
+These variable weights are combined with the time-window weights used by validators: short-term challenges currently contribute 0.2 and long-term challenges contribute 0.8.
 
 **Input Format:**
 The validator sends you a request containing:
@@ -120,11 +129,11 @@ The validator sends you a request containing:
 The geographical grid is generated from the bounding box with a resolution of 0.25 degrees, resulting in a fixed grid size of 721 × 1440 points (latitude × longitude) for the entire Earth.
 
 **Scoring:**
-You will be scored based on both the Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) between your predictions and the actual ground truth at those locations for the requested timepoints. The final score is the average of these two metrics: `(RMSE + MAE) / 2`. Ground truth is not available at request time; scoring runs once ERA5 covers **every** timestep in that challenge’s window. Short horizons therefore tend to be scored sooner than the 15-day long horizon.
+You will be scored based on both the Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) between your predictions and the actual ground truth at those locations for the requested timepoints. The final score is the average of these two metrics: `(RMSE + MAE) / 2`. Ground truth is not available at request time; scoring runs once ERA5 covers **every** timestep in that challenge's window. Short horizons therefore tend to be scored sooner than the 15-day long horizon.
 
 Your goal is to minimize both RMSE and MAE, which will improve your ranking and subnet incentive. Scoring uses:
-- **Competition ranking**: Miners are ranked based on their scores, with lower scores (better predictions) receiving better ranks
-- **Latitude weighting**: Additional latitude-based weighting is applied to ensure fair evaluation across different regions
+- **Competition ranking**: Miners are ranked based on their scores, with lower scores (better predictions) receiving better ranks.
+- **Latitude and regional weighting**: Additional latitude-based weighting is applied, with extra weighting for configured regions.
 
 Miners with incorrect output shapes, non-finite values, or missing responses receive shape penalties.
 
@@ -133,21 +142,22 @@ Miners with incorrect output shapes, non-finite values, or missing responses rec
 
 ### What to return in each phase
 
-The validator sends two kinds of requests. Your miner must detect the synapse type and return the correct field in each case.
+The miner no longer receives an axon request for the hash phase. Hashes are committed directly to chain, and validators later request full predictions over axon. The reveal request can happen during the validator's top-miner query phase or during final scoring. The committed hash and the revealed compressed bytes must match in either case.
 
-| Phase | Request type | What you return | Do not send |
-|-------|----------------|-----------------|-------------|
-| **Commit (hash)** | `HashedTimePredictionSynapse` | Set **`synapse.hash`** to the commitment string: `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()`, where `compressed_bytes` is the **blosc2-compressed** bytes of your float16 prediction tensor **`(synapse.requested_hours, 721, 1440)`** (49 or 361). Use your wallet hotkey SS58 address as `hotkey_ss58`. See [zeus.utils.hash.prediction_hash](../zeus/utils/hash.py). | Do **not** set `predictions`; the validator only expects the hash in this phase. |
-| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse`  | Set **`synapse.predictions`** to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you hashed). So: same tensor → `compress_prediction(tensor)` → `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash you committed earlier. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the hash or you are marked bad. Honor `requested_hours` and time fields from the synapse.|
+| Phase | Interface | What you do | Do not send |
+|-------|-----------|-------------|-------------|
+| **Commit (hash)** | Subtensor `Commitments.set_commitment` | Pack one `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()` per challenge into a `ChallengeCommitment` and submit it on-chain. The current layout stores long-window hashes and short-window hashes as deterministic Raw fields. Commit before the hash window closes (`CHALLENGE_HASHING_MAX_MINUTE`, currently minute `:45`). | Do not wait for a validator axon request; the current protocol uses chain commitments for the hash phase. |
+| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse` | Set **`synapse.predictions`** to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you committed on-chain). So: same tensor -> `compress_prediction(tensor)` -> `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash read from chain. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the on-chain hash or you are marked bad. Honor `requested_hours` and time fields from the synapse. |
 
 
 **Summary:**
 
-1. **Hash phase:** Compute your prediction tensor, compress it with blosc2, then return only the hash: `hash = sha256(compressed_bytes + hotkey_bytes).hexdigest()` in the `hash` field. 
-2. **Reveal / scoring phase:** Return the **same** compressed prediction as base64 in the `predictions` field. Use the same compression (and blosc2 version) as in the requirements so the validator can decode and verify.
+1. **Hash phase:** Compute your prediction tensor, compress it with blosc2, hash the compressed bytes with your hotkey, and commit the packed hashes to the blockchain.
+2. **Reveal / scoring phase:** Return the **same** compressed prediction as base64 in the `predictions` field of `TimePredictionSynapse`. Use the same compression (and blosc2 version) as in the requirements so the validator can decode and verify.
+3. **Caching recommendation:** Store the compressed bytes by challenge, or make your prediction pipeline deterministic enough to reproduce identical compressed bytes. Recomputing a numerically similar tensor is not enough if the compressed bytes differ from the on-chain committed hash.
 
-The [default miner](../neurons/miner.py) implements `_forward_hashed` (commit) and `_forward_unhashed_predictions` (reveal/scoring); 
-The [protocol](../zeus/protocol.py) defines `HashedTimePredictionSynapse` and `TimePredictionSynapse`.
+The [default miner](../neurons/miner.py) implements `on_challenge_block` for on-chain commitments and `_forward_unhashed_predictions` for reveal/scoring.
+The [protocol](../zeus/protocol.py) defines `TimePredictionSynapse`; on-chain commitment packing is handled by [zeus.commitment](../zeus/commitment.py).
 
 
 

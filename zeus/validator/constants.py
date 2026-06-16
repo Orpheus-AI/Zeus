@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Dict, List, Tuple
-
+import os
 from zeus.base.dendrite import DendriteSettings
 
 # ------------------------------------------------------
@@ -12,14 +12,14 @@ MAINNET_UID = 18
 FORWARD_DELAY_SECONDS = 90
 
 
-# Hash phase: high concurrency, batch size, retries
-HASH_DENDRITE_SETTINGS = DendriteSettings(
-    forward_concurrency=125,
-    response_batch_k=125,
-    attempts_per_miner=2,
-    max_response_body_bytes=1024 * 1024 * 10,
-    forward_timeout=13.0,
-)
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
+
+
+SAVE_TOP_10_PREDICTIONS = _env_bool("SAVE_TOP_10_PREDICTIONS", default=False)
+
+
+
 SHORT_CHALLENGE = (0, 48)
 LONG_CHALLENGE = (0, 24 * 15)
 # Per-window prediction dendrite settings keyed by (start_offset, end_offset)
@@ -112,9 +112,12 @@ TIME_WINDOW_WEIGHTS: Dict[Tuple[int, int], float] = {
 }
 
 PERCENTAGE_GOING_TO_WINNER = 0.95
-
+CHALLENGE_HASHING_MAX_MINUTE = 45
 PERFORMANCE_DATABASE_URL = "https://performance.zeussubnet.com"
 
+# Max how many blocks older than the expected challenge_block a commitment can be
+# to still be accepted as fresh for the current cycle.
+COMMITMENT_MAX_BLOCKS_OLDER = 75 # 75 blocks is 15 minutes
 # ------------------------------------------------------
 # ------------------- Burn constants -------------------
 # ------------------------------------------------------

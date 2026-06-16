@@ -90,6 +90,9 @@ PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourse
 
 # Optional integrations
 DISCORD_WEBHOOK=                # https://www.svix.com/resources/guides/how-to-make-webhook-discord/
+
+# Optional validator behavior
+SAVE_TOP_10_PREDICTIONS=false   # Save top-k verified predictions to NetCDF files
 EOL
     echo "File 'validator.env' created."
 fi

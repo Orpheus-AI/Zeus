@@ -20,11 +20,14 @@ import asyncio
 import threading
 import argparse
 import traceback
+from datetime import datetime, timedelta
 
 import bittensor as bt
 
 from zeus.base.neuron import BaseNeuron
 from zeus.utils.config import add_miner_args
+from zeus.utils.time import estimate_block_at_target_time, next_challenge_time
+from zeus.validator.constants import COMMITMENT_MAX_BLOCKS_OLDER
 
 from typing import Union, Tuple
 
@@ -65,6 +68,7 @@ class BaseMinerNeuron(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: Union[threading.Thread, None] = None
+        self.challenge_thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
 
     def run(self):
@@ -134,6 +138,90 @@ class BaseMinerNeuron(BaseNeuron):
         except Exception as e:
             bt.logging.error(traceback.format_exc())
 
+    def on_challenge_block(self, challenge_time: datetime, subtensor=None):
+        """Called when a challenge block is reached. Override in subclass."""
+        bt.logging.info(
+            f"Challenge block reached for {challenge_time}. "
+            "Override on_challenge_block() to handle."
+        )
+
+    def _challenge_loop(self):
+        """Background loop that subscribes to blocks and fires on_challenge_block at 00/06/12/18 UTC."""
+        bt.logging.info("Challenge loop started")
+        import os
+        test_mode = os.environ.get("ZEUS_TEST_MODE", "0") == "1"
+        # Subtensor uses a single websocket under the hood, which is not thread-safe.
+        # The main run() thread already holds a recv loop on self.subtensor, so calling
+        # substrate methods from this thread would raise "another thread is already
+        # running recv". A separate instance gives us our own websocket connection.
+        challenge_subtensor = bt.subtensor(config=self.config)
+        last_handled: datetime | None = None
+        while not self.should_exit:
+            try:
+                current_block_number = challenge_subtensor.get_current_block()
+                current_time = challenge_subtensor.get_timestamp(current_block_number)
+
+                if test_mode:
+                    # In test mode: fire immediately, then every 2 minutes.
+                    target_time = current_time
+                    bt.logging.info(f"[TEST MODE] Firing challenge immediately at block {current_block_number}")
+                    self.on_challenge_block(target_time, subtensor=challenge_subtensor)
+                    last_handled = target_time
+                    time.sleep(120)
+                    continue
+
+                target_time = next_challenge_time(current_time)
+
+                # Avoid double-firing the same challenge window. Skip if we already handled this exact challenge window. 
+                if last_handled is not None and target_time <= last_handled:
+                    target_time = next_challenge_time(target_time)
+
+                open_time = target_time - timedelta(
+                    seconds=COMMITMENT_MAX_BLOCKS_OLDER * 12
+                )
+                wait_time = open_time if current_time < open_time else current_time
+                target_block = estimate_block_at_target_time(
+                    wait_time, current_block_number, current_time
+                )
+
+                bt.logging.info(
+                    f"Commit window {open_time}–{target_time} UTC, waiting for block {target_block}"
+                )
+
+                block_data = challenge_subtensor.substrate.get_block()
+                assert block_data
+                current_block_hash = block_data["header"]["hash"]
+
+                def handler(block_data: dict):
+                    block_num = block_data["header"]["number"]
+                    bt.logging.debug(
+                        f"Challenge loop | block {block_num} | target {target_block}"
+                    )
+                    if self.should_exit:
+                        return True
+                    if block_num >= target_block:
+                        return True
+
+                challenge_subtensor.substrate.get_block_handler(
+                    current_block_hash,
+                    header_only=True,
+                    subscription_handler=handler,
+                )
+
+                if not self.should_exit:
+                    bt.logging.info(f"Challenge block reached for {target_time}")
+                    self.on_challenge_block(
+                        target_time, subtensor=challenge_subtensor
+                    )
+                    last_handled = target_time
+
+            except Exception as e:
+                bt.logging.error(f"Error in challenge loop: {e}")
+                if not self.should_exit:
+                    time.sleep(12)
+
+        bt.logging.info("Challenge loop stopped")
+
     def run_in_background_thread(self):
         """
         Starts the miner's operations in a separate background thread.
@@ -144,6 +232,10 @@ class BaseMinerNeuron(BaseNeuron):
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.challenge_thread = threading.Thread(
+                target=self._challenge_loop, daemon=True
+            )
+            self.challenge_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -156,6 +248,8 @@ class BaseMinerNeuron(BaseNeuron):
             self.should_exit = True
             if self.thread is not None:
                 self.thread.join(5)
+            if self.challenge_thread is not None:
+                self.challenge_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
 
@@ -222,6 +316,8 @@ class BaseMinerNeuron(BaseNeuron):
 
         Otherwise, allow the request to be processed further.
         """
+     
+       
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return True, "Missing dendrite or hotkey"

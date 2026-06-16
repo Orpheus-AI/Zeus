@@ -11,6 +11,7 @@ class MinerData:
     mae: Optional[float] = None
     shape_penalty: Optional[bool] = None
     prediction_hash: Optional[str] = None
+    block_hash_committed_at: Optional[int] = None
 
     @property
     def metrics(self):

@@ -21,6 +21,7 @@ from zeus.validator.responses_processing import (
     _verify_hashes,
     create_compressed_predictions,
 )
+from zeus.validator.constants import SAVE_TOP_10_PREDICTIONS
 from zeus.validator.reward import calculate_rmses, complete_challenge
 from zeus.validator.storage import save_best_miner_prediction
 
@@ -149,22 +150,24 @@ async def run_final_prediction_phase(self, sample, current_challenge_all_miner_h
 
     return all_miners_data
 
-def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_hashes, lookup, sample_str):
+def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_hashes, good_committed_blocks, lookup, sample_str):
     """Select top K miners to query, falling back to random selection if needed.
     
     Args:
         best_10_hotkeys: List of top 10 miner hotkeys to prefer
         good_hashing_hotkeys: List of all good hashing miner hotkeys
         good_hashes: List of hashes corresponding to good_hashing_hotkeys
+        good_committed_blocks: List of committed blocks corresponding to good_hashing_hotkeys
         lookup: Dictionary mapping hotkeys to UIDs
         sample_str: String representation of the sample for logging
         
     Returns:
-        Tuple of (hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners)
+        Tuple of (hotkeys_to_query, hashes_of_queried, blocks_of_queried, uids_to_query, query_random_miners)
         where query_random_miners indicates if random selection was used
     """
     hotkeys_to_query = []
     hashes_of_queried = []
+    blocks_of_queried = []
     uids_to_query = []
     for hotkey in best_10_hotkeys:
         try:
@@ -174,6 +177,7 @@ def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_ha
             uids_to_query.append(uid)
             hotkeys_to_query.append(good_hashing_hotkeys[index])
             hashes_of_queried.append(good_hashes[index])
+            blocks_of_queried.append(good_committed_blocks[index])
         except Exception as e:
             bt.logging.warning(f"[_select_top_k_miners_to_query] Error: {e}")
             bt.logging.warning(f"[_select_top_k_miners_to_query] Hotkey {hotkey} not found in good hashing hotkeys. Skipping.")
@@ -196,10 +200,11 @@ def _select_top_k_miners_to_query(best_10_hotkeys, good_hashing_hotkeys, good_ha
 
         hotkeys_to_query = [good_hashing_hotkeys[i] for i in indices]
         hashes_of_queried = [good_hashes[i] for i in indices]
+        blocks_of_queried = [good_committed_blocks[i] for i in indices]
         uids_to_query = [lookup[hotkey] for hotkey in hotkeys_to_query]
         query_random_miners = True
     
-    return hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners
+    return hotkeys_to_query, hashes_of_queried, blocks_of_queried, uids_to_query, query_random_miners
 
 def find_allowed_miners_to_query(new_hotkeys2uids, previous_hotkeys2uids):
     """Find miners that are allowed to query based on hotkey-UID consistency.
@@ -263,25 +268,28 @@ def _get_best_hotkeys_to_query(state_per_challenge: dict, state_key: str) -> Tup
 
     return [], []
 
-def filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query):
+def filter_good_hashing_miners_data(good_hashes, good_hotkeys, good_committed_blocks, allowed_hotkeys_to_query):
     """Filter miner data to only include miners with allowed hotkeys.
     
     Args:
         good_hashes: List of good hashes
         good_hotkeys: List of good hotkeys
+        good_committed_blocks: List of committed blocks
         allowed_hotkeys_to_query: List of allowed hotkeys to filter by
         
     Returns:
-        Filtered list of good hashes, good hotkeys
+        Filtered list of good hashes, good hotkeys, committed blocks
     """
     filtered_hashes = []
     filtered_hotkeys = []
-    for hashed_prediction, hotkey in zip(good_hashes, good_hotkeys):
+    filtered_committed_blocks = []
+    for hashed_prediction, hotkey, committed_block in zip(good_hashes, good_hotkeys, good_committed_blocks):
         if hotkey in allowed_hotkeys_to_query:
             filtered_hashes.append(hashed_prediction)
             filtered_hotkeys.append(hotkey)
+            filtered_committed_blocks.append(committed_block)
 
-    return filtered_hashes, filtered_hotkeys
+    return filtered_hashes, filtered_hotkeys, filtered_committed_blocks
 
 async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys2uids):
     """Run initial prediction phase querying top K miners for each challenge.
@@ -304,30 +312,40 @@ async def run_initial_prediction_top_k_phases(self, challenges, previous_hotkeys
             continue
         sample_str = str(sample)
 
-        good_hashes, good_hotkeys = self.database.get_hashing_data_for_sample(sample)
+        good_hashes, good_hotkeys, good_committed_blocks = self.database.get_hashing_data_for_sample(sample)
         bt.logging.info(f"[run_initial_prediction_top_k_phases] Good hashes: {good_hashes} Good hotkeys: {good_hotkeys}")
         if good_hashes == [] or good_hotkeys == []:
             bt.logging.warning(f"[run_initial_prediction_top_k_phases] No good hashing miners found for sample {sample_str}. Skipping.")
             continue
 
-        filtered_good_hashes, filtered_good_hotkeys = filter_good_hashing_miners_data(good_hashes, good_hotkeys, allowed_hotkeys_to_query)
+        filtered_good_hashes, filtered_good_hotkeys, filtered_committed_blocks = filter_good_hashing_miners_data(good_hashes, good_hotkeys, good_committed_blocks, allowed_hotkeys_to_query)
         
         state_key = sample.state_key
         best_10_hotkeys, best_hotkeys_to_query = _get_best_hotkeys_to_query(self.state_per_challenge, state_key)
        
-        hotkeys_to_query, hashes_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_hotkeys_to_query, filtered_good_hotkeys, filtered_good_hashes, new_hotkeys2uids, sample_str)
+        hotkeys_to_query, hashes_of_queried, blocks_of_queried, uids_to_query, query_random_miners = _select_top_k_miners_to_query(best_hotkeys_to_query, filtered_good_hotkeys, filtered_good_hashes, filtered_committed_blocks, new_hotkeys2uids, sample_str)
 
+        uid_to_hash = dict(zip(uids_to_query, hashes_of_queried))
+        uid_to_committed_block = dict(zip(uids_to_query, blocks_of_queried))
 
         def _save_and_free(miner_uids, axons_to_query, compressed_predictions):
             batch = []
+    
             for i, (uid, axon, pred) in enumerate(zip(miner_uids, axons_to_query, compressed_predictions)):
                 compressed_predictions[i] = None  # Free the heavy compressed string list reference immediately
                 if pred is not None:
-                    miner = MinerData(uid=uid, hotkey=axon.hotkey, prediction=pred)
-                    # try:
-                    #     save_best_miner_prediction(self, sample, miner, query_random_miners, best_10_hotkeys)
-                    # except Exception as e:
-                    #     bt.logging.warning(f"[run_initial_prediction_top_k_phases] {miner.hotkey} {miner.uid} Error saving prediction: {e}")
+                    miner = MinerData(
+                        uid=uid,
+                        hotkey=axon.hotkey,
+                        prediction=pred,
+                        prediction_hash=uid_to_hash.get(uid),
+                        block_hash_committed_at=uid_to_committed_block.get(uid),
+                    )
+                    if SAVE_TOP_10_PREDICTIONS:
+                        try:
+                            save_best_miner_prediction(self, sample, miner, query_random_miners, best_10_hotkeys)
+                        except Exception as e:
+                            bt.logging.warning(f"[run_initial_prediction_top_k_phases] {miner.hotkey} {miner.uid} Error saving prediction: {e}")
                     miner.prediction = None  # Free prediction before moving to the next one
                     batch.append(miner)
                     del pred

@@ -12,7 +12,7 @@ from zeus.utils.compression import compress_prediction
 def prediction_hash(compressed_bytes: bytes, hotkey: str) -> str:
     """
     Canonical hash for validator-miner commitment: sha256(compressed_predictions + hotkey).
-    Used for HashedTimePredictionSynapse and verification.
+    Used for hashing and verification.
     """
     if compressed_bytes is None:
         bt.logging.warning("Compressed bytes are None, returning None")
