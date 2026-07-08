@@ -207,7 +207,7 @@ def add_validator_args(cls, parser):
         "--neuron.burn_percent",
         type=float,
         help="The percentage of the reward to burn.",
-        default=0.4,
+        default=0.3,
     )
 
     parser.add_argument(
