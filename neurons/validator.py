@@ -87,7 +87,7 @@ class Validator(BaseValidatorNeuron):
 
         self.weight_setter = WeightSetter(
             config=self.config,
-            wallet=bt.wallet(config=self.config),
+            wallet=bt.Wallet(config=self.config),
             challenge_registry=self.challenge_registry,
             burn_uid=self.BURN_UID,
             burn_manager=self.burn_manager,

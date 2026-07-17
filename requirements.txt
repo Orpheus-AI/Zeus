@@ -1,5 +1,5 @@
-bittensor==9.9.0
-async-substrate-interface==1.5.1
+bittensor==10.3.0
+async-substrate-interface==2.0.2
 starlette>=0.30.0
 pydantic>=2
 

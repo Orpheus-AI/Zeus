@@ -57,7 +57,7 @@ class BaseMinerNeuron(BaseNeuron):
                 "You are allowing non-registered entities to send requests to your miner. This is a security risk."
             )
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bt.axon(
+        self.axon = bt.Axon(
             wallet=self.wallet,
             config=self.config() if callable(self.config) else self.config,
         )
@@ -154,7 +154,7 @@ class BaseMinerNeuron(BaseNeuron):
         # The main run() thread already holds a recv loop on self.subtensor, so calling
         # substrate methods from this thread would raise "another thread is already
         # running recv". A separate instance gives us our own websocket connection.
-        challenge_subtensor = bt.subtensor(config=self.config)
+        challenge_subtensor = bt.Subtensor(config=self.config)
         last_handled: datetime | None = None
         while not self.should_exit:
             try:
