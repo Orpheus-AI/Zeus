@@ -22,7 +22,7 @@ class PerformanceDatabaseConnection:
 
     def __init__(
         self,
-        wallet: bt.wallet,
+        wallet: bt.Wallet,
         api_url: str,
     ):
         """
@@ -54,7 +54,7 @@ class PerformanceDatabaseConnection:
         self._thread.start()
         
         # Create dendrite for sending signed requests
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.dendrite = bt.Dendrite(wallet=self.wallet)
         
         bt.logging.info(f"{LOG_COLOR}[PerformanceDatabaseConnection] Initialized API endpoint: {self.api_url}{LOG_COLOR_RESET}")
 

@@ -40,6 +40,11 @@ fi
 # install repository itself and CPU only torch
 pip install --extra-index-url https://download.pytorch.org/whl/cpu -e . --use-pep517
 
+# bittensor 10.3 / async-substrate-interface 2.x: cyscale must own the scalecodec
+# namespace. Old py-scale-codec conflicts and breaks chain queries.
+pip uninstall scalecodec cyscale -y
+pip install cyscale==0.5.0 --force-reinstall
+
 # Create miner.env if it doesn't exist
 if [ -f "miner.env" ]; then
     echo "File 'miner.env' already exists. Skipping creation."

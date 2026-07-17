@@ -83,7 +83,7 @@ class ChallengeCommitment:
 
 
 def commit_to_chain(
-    subtensor: "bt.subtensor",
+    subtensor: "bt.Subtensor",
     wallet,
     netuid: int,
     commitment: ChallengeCommitment,
@@ -115,7 +115,7 @@ def commit_to_chain(
 
 
 def read_all_miner_commitments(
-    subtensor: "bt.subtensor",
+    subtensor: "bt.Subtensor",
     metagraph,
     netuid: int,
     block: int | None = None,
@@ -144,7 +144,7 @@ def read_all_miner_commitments(
 
 
 def read_commitment(
-    subtensor: "bt.subtensor",
+    subtensor: "bt.Subtensor",
     netuid: int,
     hotkey: str,
     block: int | None = None,
@@ -168,7 +168,7 @@ def read_commitment(
     committed_at_block = data.get("block") if isinstance(data, dict) else None
 
     binary_fields = []
-    for field_item in info["fields"][0]: 
+    for field_item in info["fields"]: 
         for key, val in field_item.items():
             if not key.startswith("Raw"):
                 continue

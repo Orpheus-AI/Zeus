@@ -65,7 +65,7 @@ class WeightSetter:
         self.blocks_to_wait_before_resetting_weights = blocks_to_wait_before_resetting_weights
 
         # Private websocket connection for this worker thread.
-        self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor = bt.Subtensor(config=self.config)
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
         self.tempo = self.subtensor.tempo(self.config.netuid)
 
