@@ -31,7 +31,7 @@ from typing import Dict, List, Set, Union
 
 import bittensor as bt
 import numpy as np
-
+from async_substrate_interface.errors import SubstrateRequestException
 from zeus.base.dendrite import DendriteSettings, ZeusDendrite
 from zeus.base.neuron import BaseNeuron
 from zeus.utils.config import add_validator_args
@@ -272,9 +272,21 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
+        
+        TRIES = 4
+        for attempt in range(TRIES):
+            try:
+                self.metagraph.sync(subtensor=self.subtensor)
+                break
+            except SubstrateRequestException as e:
+                if "UnknownBlock" not in str(e) or attempt == 1:
+                    raise
 
-        # Sync the metagraph.
-        self.metagraph.sync(subtensor=self.subtensor)
+                bt.logging.warning(
+                    "UnknownBlock during metagraph.sync(), reconnecting..."
+                )
+                self.subtensor = bt.Subtensor(network=self.subtensor.network)
+                time.sleep(3)  # Optional: brief pause before loop retries
 
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:

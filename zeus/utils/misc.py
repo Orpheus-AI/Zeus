@@ -21,7 +21,7 @@ from math import floor
 from typing import Callable, Any, Union, Iterable, Tuple, List, TypeVar
 import numpy as np
 from functools import lru_cache, update_wrapper
-
+import bittensor as bt
 from zeus import __version__ as zeus_version
 
 T = TypeVar('T')
@@ -141,4 +141,12 @@ def ttl_get_block(self) -> int:
 
     Note: self here is the miner or validator instance
     """
-    return self.subtensor.get_current_block()
+    #return self.subtensor.get_current_block()
+    try:
+        return self.subtensor.get_current_block()
+    except Exception:
+        time.sleep(1)
+        # Reconnect
+        self.subtensor = bt.Subtensor(config=self.config)
+
+        return self.subtensor.get_current_block()
