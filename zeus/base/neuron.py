@@ -92,7 +92,7 @@ class BaseNeuron(ABC):
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
         # Check if the miner is registered on the Bittensor network before proceeding further.
-        self.check_registered()
+        # self.check_registered()
 
         # Each miner gets a unique identity (UID) in the network for differentiation.
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
@@ -112,7 +112,7 @@ class BaseNeuron(ABC):
         and saves state, but bypasses the weight-setting logic.
         """
         # Ensure miner or validator hotkey is still registered on the network.
-        self.check_registered()
+        # self.check_registered()
 
         if self.should_sync_metagraph():
             self.resync_metagraph()

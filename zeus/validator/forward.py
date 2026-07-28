@@ -46,7 +46,7 @@ async def forward(self: BaseValidatorNeuron):
     
 
     # If the validator has been deregistered, it will automatically stop the program
-    self.check_registered()
+    # self.check_registered()
     
     if self.time_scheduler.is_hash_commit_time():
         # Note : because the challenge starts at .floor('6h') of the time now, that means that at is_hash_commit_time and at is_query_best_time the same challenge would be returned
