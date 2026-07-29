@@ -141,12 +141,17 @@ def ttl_get_block(self) -> int:
 
     Note: self here is the miner or validator instance
     """
-    #return self.subtensor.get_current_block()
-    try:
-        return self.subtensor.get_current_block()
-    except Exception:
-        time.sleep(1)
-        # Reconnect
-        self.subtensor = bt.Subtensor(config=self.config)
-
-        return self.subtensor.get_current_block()
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return self.subtensor.get_current_block()
+        except TypeError:
+            bt.logging.warning(
+                f"Failed to fetch block, retrying in 2s... "
+                f"(Attempt {attempt + 1}/{max_retries})"
+            )
+            time.sleep(2)
+            if attempt == max_retries - 2:
+                # Reconnect before the last attempt
+                self.subtensor = bt.Subtensor(config=self.config)
+    raise ConnectionError("Lost connection to the Substrate node.")

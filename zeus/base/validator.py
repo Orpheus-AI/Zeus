@@ -262,7 +262,7 @@ class BaseValidatorNeuron(BaseNeuron):
         This functions gets a uid and hotkey and checks is the neuron was registered before the release of the new subnet version
         """  
         reg_block = self.metagraph.block_at_registration[uid]
-        current_block = self.subtensor.block
+        current_block = self.block
 
         return is_after_zeus_v2_cutoff(reg_block, current_block)
 
