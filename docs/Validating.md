@@ -165,7 +165,7 @@ Weight setting now runs in a dedicated background `WeightSetter` thread instead 
 
 Weights are calculated from rolling average ranks. The default windows are `--neuron.score_time_window_short 4` for short-term challenges and `--neuron.score_time_window_long 8` for long-term challenges. For each available challenge, the best ranked eligible miner receives most of that challenge's weight (`PERCENTAGE_GOING_TO_WINNER`), the remainder is distributed logarithmically, and challenge weights are combined using the variable and time-window weights in [constants.py](../zeus/validator/constants.py). If there is no rank history yet, the validator temporarily rewards miners that have responded recently.
 
-Burn is skipped on testnet. On mainnet, the validator fetches per-epoch burn entries from the performance API and applies them before emitting weights. If burn data cannot be fetched, it falls back to `--neuron.burn_percent` (default `0.5`) and can send a Discord notification if `DISCORD_WEBHOOK` is configured.
+Burn is skipped on testnet. On mainnet, the validator fetches per-epoch burn entries from the performance API and applies them before emitting weights. If burn data cannot be fetched, it falls back to `--neuron.burn_percent` (default `0.2`) and can send a Discord notification if `DISCORD_WEBHOOK` is configured.
 
 ## Hardware requirements
 We strive to make validation as simple as possible on our subnet, aiming to minimise storage and hardware requirements for our validators.

@@ -121,7 +121,7 @@ COMMITMENT_MAX_BLOCKS_OLDER = 75 # 75 blocks is 15 minutes
 # ------------------------------------------------------
 # ------------------- Burn constants -------------------
 # ------------------------------------------------------
-BURN_UID: int = 56
+BURN_UID: int = 84
 BLOCKS_TO_REQUEST_BURN: int = 160   # request burn amounts this many blocks before epoch end
 BLOCKS_TO_SET_WEIGHT: int = 80      # set weights this many blocks before epoch end
 BURN_AMOUNTS_JSON_PATH: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "burn_amounts.json"
