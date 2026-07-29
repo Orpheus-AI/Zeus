@@ -68,7 +68,7 @@ async def run_all_hash_phases(self, challenges):
             bt.logging.info(f"[run_all_hash_phases] Challenge {sample.state_key} already exists in database, skipping hash phase")
             continue
         
-        chain_head_block = self.subtensor.get_current_block()
+        chain_head_block = self.block
         chain_head_time = self.subtensor.get_timestamp(chain_head_block)
 
         commit_block, read_block, reference_block, max_blocks_older = _block_parameters_for_sample(
