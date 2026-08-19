@@ -15,11 +15,13 @@
 ## Installation
 
 Download the repository and navigate to the folder.
+
 ```bash
 git clone https://github.com/Orpheus-AI/Zeus.git && cd Zeus
 ```
 
-We recommend using a Conda virtual environment to install the necessary Python packages.<br>
+We recommend using a Conda virtual environment to install the necessary Python packages.  
+
 You can set up Conda with this [quick command-line install](https://docs.anaconda.com/free/miniconda/#quick-command-line-install). Note that after you run the last commands in the miniconda setup process, you'll be prompted to start a new shell session to complete the initialization. 
 
 With miniconda installed, you can create a virtual environment with this command:
@@ -39,6 +41,7 @@ chmod +x setup.sh
 ```
 
 
+
 ## Registration
 
 To mine on our subnet, you must have a registered hotkey.
@@ -46,9 +49,11 @@ To mine on our subnet, you must have a registered hotkey.
 *Note: For testnet tao, you can make requests in the [Bittensor Discord's "Requests for Testnet Tao" channel](https://discord.com/channels/799672011265015819/1190048018184011867)*
 
 To reduce the risk of deregistration due to technical issues or a poor performing model, we recommend the following:
+
 1. Test your miner on testnet before you start mining on mainnet.
 2. Before registering your hotkey on mainnet, make sure your port is open by running `curl your_ip:your_port`
-3. If you've trained a custom model, test it's performance by deploying to testnet. 
+3. If you've trained a custom model, test it's performance by deploying to testnet.
+
 
 
 #### Mainnet
@@ -57,16 +62,20 @@ To reduce the risk of deregistration due to technical issues or a poor performin
 btcli s register --netuid 18 --wallet.name [wallet_name] --wallet.hotkey [wallet.hotkey] --subtensor.network finney
 ```
 
+
+
 #### Testnet
 
 ```bash
 btcli s register --netuid 301 --wallet.name [wallet_name] --wallet.hotkey [wallet.hotkey] --subtensor.network test
 ```
 
+
+
 ## Setup
+
 Before launching your miner, make sure to create a file called `miner.env`. This file will not be tracked by git. 
 You can use the sample below as a starting point, but make sure to replace **wallet_name**, **wallet_hotkey**, and **axon_port**.
-
 
 ```bash
 # Subtensor Network Configuration:
@@ -86,7 +95,10 @@ AXON_PORT=
 BLACKLIST_FORCE_VALIDATOR_PERMIT=True          # Default setting to force validator permit for blacklisting
 ```
 
+
+
 ## Mining
+
 Now you're ready to run your miner!
 
 ```bash
@@ -95,7 +107,9 @@ conda activate zeus
 ```
 
 
+
 ### Input and desired output data
+
 The datasource for this subnet consists of ERA5 reanalysis data from the Climate Data Store (CDS) of the European Union's Earth observation programme (Copernicus). This comprises the largest global environmental dataset to date, containing hourly measurements across a multitude of variables. 
 
 **Request Schedule:**
@@ -109,17 +123,21 @@ There are 4 forecast rounds per day, anchored at 00:30, 06:30, 12:30, and 18:30 
 
 Each challenge focuses on a single variable. Supported variables and variable weights are defined in [constants](../zeus/validator/constants.py):
 
-| Variable | Weight |
-|----------|--------|
-| `2m_temperature` | 0.2 |
-| `100m_u_component_of_wind` | 0.3 |
-| `100m_v_component_of_wind` | 0.3 |
-| `surface_solar_radiation_downwards` | 0.2 |
+
+| Variable                            | Weight |
+| ----------------------------------- | ------ |
+| `2m_temperature`                    | 0.2    |
+| `100m_u_component_of_wind`          | 0.3    |
+| `100m_v_component_of_wind`          | 0.3    |
+| `surface_solar_radiation_downwards` | 0.2    |
+
 
 These variable weights are combined with the time-window weights used by validators: short-term challenges currently contribute 0.2 and long-term challenges contribute 0.8.
 
-**Input Format:**
+#### **Input Format:**
+
 The validator sends you a request containing:
+
 - **Bounding box coordinates**: `latitude_start`, `latitude_end`, `longitude_start`, `longitude_end` (always -90 to 90 for latitude, -180 to 179.75 for longitude)
 - **Time range**: `start_time` and `end_time` (float timestamps in UTC, aligned to the horizon)
 - **Number of time steps**: `requested_hours` — **49** for short-term or **361** for long-term
@@ -128,26 +146,47 @@ The validator sends you a request containing:
 
 The geographical grid is generated from the bounding box with a resolution of 0.25 degrees, resulting in a fixed grid size of 721 × 1440 points (latitude × longitude) for the entire Earth.
 
-**Scoring:**
+### **Scoring**
+
 You will be scored based on both the Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) between your predictions and the actual ground truth at those locations for the requested timepoints. The final score is the average of these two metrics: `(RMSE + MAE) / 2`. Ground truth is not available at request time; scoring runs once ERA5 covers **every** timestep in that challenge's window. Short horizons therefore tend to be scored sooner than the 15-day long horizon.
 
-Your goal is to minimize both RMSE and MAE, which will improve your ranking and subnet incentive. Scoring uses:
-- **Competition ranking**: Miners are ranked based on their scores, with lower scores (better predictions) receiving better ranks.
-- **Latitude and regional weighting**: Additional latitude-based weighting is applied, with extra weighting for configured regions.
+Your goal is to minimize both RMSE and MAE, which will improve your ranking and subnet incentive. Scoring works as follows:
+
+- **Competition ranking**: Miners are ranked on `(RMSE + MAE) / 2` (lower is better). Ties on RMSE can share the same competition rank.
+- **Latitude / area weighting**: Grid cells near the equator cover more area than polar cells, so RMSE and MAE use latitude-based area weights (see [ScoringChallengesCalculatingWeights.ipynb](ScoringChallengesCalculatingWeights.ipynb)).
+- **Geographic scalars (Europe / Germany)**: Each cell is also multiplied by a regional scalar from [region_mask.py](../zeus/utils/region_mask.py) / [constants.py](../zeus/validator/constants.py). Overlapping regions take the **maximum** scalar (not a product):
+
+
+| Region                  | Latitude  | Longitude | Scalar |
+| ----------------------- | --------- | --------- | ------ |
+| Default (rest of Earth) | —         | —         | 1.0    |
+| Europe                  | 34°N–72°N | 25°W–45°E | 1.5    |
+| Germany                 | 47°N–56°N | 6°E–15°E  | 2.5    |
+
+
+The product of the area weight and the regional scalar is **mean-normalized** before RMSE/MAE. Full formulas are in [ScoringChallengesCalculatingWeights.ipynb](ScoringChallengesCalculatingWeights.ipynb). The map below (from [ScalarHeatmap.ipynb](ScalarHeatmap.ipynb)) shows the scalars:
+
+Geographic scalar weights across Earth: default 1.0, Europe 1.5, Germany 2.5
+> NOTE that the scalars would be changed on Friday the 21st of August 2026 and the above reflects the scalars used currently before the update comes into action!
+
+- **Subnet weights from rank history**: Incentive weights use a rolling average of challenge ranks **per variable × horizon**. When loading history, validators only keep ranks whose `challenge_enddate` is at or before the **last completed 6-hour window** (`floor(now UTC, 6h) − 6h`), so the current cycle is excluded. They then average the last `window_size` of those ranks (defaults: **4** for short-term, **8** for long-term). See [results_state.py](../zeus/utils/results_state.py) and the scoring notebook for details.
 
 Miners with incorrect output shapes, non-finite values, or missing responses receive shape penalties.
 
 > [!IMPORTANT]
 > There are 4 scheduling anchors per day at 00:30, 06:30, 12:30, and 18:30 UTC. Each challenge is always for the entire Earth (721 × 1440 grid points) and either **49** or **361** hourly steps. Compress the float16 array with the same layout: `(requested_hours, 721, 1440)`.
 
+
+
 ### What to return in each phase
 
 The miner no longer receives an axon request for the hash phase. Hashes are committed directly to chain, and validators later request full predictions over axon. The reveal request can happen during the validator's top-miner query phase or during final scoring. The committed hash and the revealed compressed bytes must match in either case.
 
-| Phase | Interface | What you do | Do not send |
-|-------|-----------|-------------|-------------|
-| **Commit (hash)** | Subtensor `Commitments.set_commitment` | Pack one `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()` per challenge into a `ChallengeCommitment` and submit it on-chain. The current layout stores long-window hashes and short-window hashes as deterministic Raw fields. Commit before the hash window closes (`CHALLENGE_HASHING_MAX_MINUTE`, currently minute `:45`). | Do not wait for a validator axon request; the current protocol uses chain commitments for the hash phase. |
-| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse` | Set **`synapse.predictions`** to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you committed on-chain). So: same tensor -> `compress_prediction(tensor)` -> `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash read from chain. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the on-chain hash or you are marked bad. Honor `requested_hours` and time fields from the synapse. |
+
+| Phase                                  | Interface                              | What you do                                                                                                                                                                                                                                                                                                                                                                            | Do not send                                                                                                                                                          |
+| -------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Commit (hash)**                      | Subtensor `Commitments.set_commitment` | Pack one `sha256(compressed_bytes + hotkey_ss58.encode("utf-8")).hexdigest()` per challenge into a `ChallengeCommitment` and submit it on-chain. The current layout stores long-window hashes and short-window hashes as deterministic Raw fields. Commit before the hash window closes (`CHALLENGE_HASHING_MAX_MINUTE`, currently minute `:45`).                                      | Do not wait for a validator axon request; the current protocol uses chain commitments for the hash phase.                                                            |
+| **Reveal / Scoring (full prediction)** | `TimePredictionSynapse`                | Set `synapse.predictions` to the **base64-encoded** string of the **same** blosc2-compressed prediction (the one you committed on-chain). So: same tensor -> `compress_prediction(tensor)` -> `base64.b64encode(compressed).decode("ascii")`. The validator verifies that `sha256(compressed + hotkey)` equals the hash read from chain. If this verification fails you get a penalty. | Do not change or substitute a different prediction; it must match the on-chain hash or you are marked bad. Honor `requested_hours` and time fields from the synapse. |
 
 
 **Summary:**
@@ -158,6 +197,3 @@ The miner no longer receives an axon request for the hash phase. Hashes are comm
 
 The [default miner](../neurons/miner.py) implements `on_challenge_block` for on-chain commitments and `_forward_unhashed_predictions` for reveal/scoring.
 The [protocol](../zeus/protocol.py) defines `TimePredictionSynapse`; on-chain commitment packing is handled by [zeus.commitment](../zeus/commitment.py).
-
-
-
