@@ -106,6 +106,12 @@ conda activate zeus
 ./start_miner.sh
 ```
 
+### Whitepaper
+Although the subnet is continuously updating the basic idea's are explained in our whitepaper.
+We highly recommend that you read this before starting to mine on our subnet.
+
+You can read the paper on our website:
+[whitepaper link](https://www.zeussubnet.com/news-and-updates/ZEUS_V2_Benchmark.pdf)
 
 
 ### Input and desired output data
