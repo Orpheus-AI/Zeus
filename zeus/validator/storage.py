@@ -533,7 +533,10 @@ class OptimizedWeatherStorage:
                 or not torch.isfinite(output).all()
             ):
                 if output is not None:
-                    bt.logging.warning(f'{output.shape[0]} != {hours}')
+                    if output.shape[0] != hours:
+                        bt.logging.warning(f"score_and_prune: output shape {output.shape} vs desired hours {hours}")
+                    else:
+                        bt.logging.warning(f"score_and_prune: output has NaN or Inf values")
                 if end_t < (latest_available - pd.Timedelta(days=3).total_seconds()):
                     bt.logging.warning(f"score_and_prune: challenge {c_uid} unscoreable (end_t={end_t}, latest={to_timestamp(latest_available)}), deleting")
                     if output is not None:

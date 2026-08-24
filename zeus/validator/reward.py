@@ -32,10 +32,40 @@ from zeus.validator.miner_data import MinerData
 from zeus.validator.metrics import custom_rmse, custom_mae
 from zeus.validator.collusion import apply_collusion_penalty, pick_threshold
 
-# Samples before this instant use OLD_REGION_CONFIGS weights (GMT+0 / Copernicus wall time).
+# Samples before this instant use Europe+Germany box weights (REGION_CONFIGS).
+# At/after this instant, scoring uses capacity-weighted .npy scalars by variable.
 _OLD_EUROPE_WEIGHT_CUTOFF_TS = datetime(
-    2026, 4, 10, 6, 0, 0, tzinfo=timezone.utc
+    2026, 8, 25, 18, 0, 0, tzinfo=timezone.utc
 ).timestamp()
+
+
+def _geographic_weight_for_sample(sample: Era5Sample) -> torch.Tensor:
+    """Select pre-cutoff box weights or post-cutoff variable-specific scalars."""
+    if sample.start_timestamp < _OLD_EUROPE_WEIGHT_CUTOFF_TS:
+        bt.logging.warning(
+            f"Using Europe+Germany box weights for sample {sample.start_timestamp} "
+            f"cutoff {_OLD_EUROPE_WEIGHT_CUTOFF_TS}"
+        )
+        return sample.old_europe_weight
+
+    variable = sample.variable
+    if variable == "surface_solar_radiation_downwards":
+        weight = sample.solar_scalar
+    elif variable in ("100m_u_component_of_wind", "100m_v_component_of_wind"):
+        weight = sample.wind_scalar
+    elif variable == "2m_temperature":
+        weight = sample.temperature_scalar
+    else:
+        bt.logging.warning(
+            f"Unknown variable {variable!r}; falling back to Europe+Germany box weights"
+        )
+        weight = sample.old_europe_weight
+
+    bt.logging.warning(
+        f"Using capacity-weighted scalar for variable={variable} "
+        f"sample={sample.start_timestamp} cutoff={_OLD_EUROPE_WEIGHT_CUTOFF_TS}"
+    )
+    return weight
 
 
 def should_apply_shape_penalty(correct_shape: torch.Size, prediction: torch.Tensor) -> bool:
@@ -95,12 +125,7 @@ def set_errors(
     output_data = sample.output_data
     latitude_weights = np.load(LATITUDE_WEIGHTS_PATH)
     latitude_weights = torch.from_numpy(latitude_weights).to(output_data.device).to(output_data.dtype)
-    if sample.start_timestamp < _OLD_EUROPE_WEIGHT_CUTOFF_TS:
-        europe_weight = sample.old_europe_weight
-        bt.logging.warning(f"Using old europe weight for sample {sample.start_timestamp} cutoff {_OLD_EUROPE_WEIGHT_CUTOFF_TS}")
-    else:
-        europe_weight = sample.europe_weight
-        bt.logging.warning(f"Using new europe weight for sample {sample.start_timestamp} cutoff {_OLD_EUROPE_WEIGHT_CUTOFF_TS}")
+    europe_weight = _geographic_weight_for_sample(sample).to(output_data.device).to(output_data.dtype)
 
     miners_data = []
     for i in range(len(miner_uids)):

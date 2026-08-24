@@ -1,14 +1,57 @@
 from typing import Optional, Tuple, Type
+from pathlib import Path
+
+import numpy as np
 import torch
 import time
 import bittensor as bt
-from zeus.utils.coordinates import get_grid
+from zeus.utils.coordinates import get_bbox, get_grid, slice_bbox
 from zeus.utils.time import to_timestamp
 from zeus.protocol import TimePredictionSynapse, PredictionSynapse
 from zeus import __version__ as zeus_version
 from zeus.validator.challenge_spec import make_state_key
-from zeus.validator.constants import DEFAULT_STEP_SIZE
-from zeus.utils.region_mask import REGION_CONFIGS, build_geographic_weights, OLD_REGION_CONFIGS
+from zeus.validator.constants import (
+    DEFAULT_STEP_SIZE,
+    WIND_SCALARS_PATH,
+    SOLAR_SCALARS_PATH,
+    TEMPERATURE_SCALARS_PATH,
+)
+from zeus.utils.region_mask import REGION_CONFIGS, build_geographic_weights
+
+_SCALAR_CACHE: dict[Path, dict[str, np.ndarray]] = {}
+
+
+def _load_scalar_npz(path: Path) -> Optional[dict[str, np.ndarray]]:
+    """Load scalars npz once. Keys: scalars (lat, lon), lats (lat,), lons (lon,)."""
+    if path in _SCALAR_CACHE:
+        return _SCALAR_CACHE[path]
+    if not path.exists():
+        return None
+    with np.load(path) as data:
+        payload = {
+            "scalars": np.asarray(data["scalars"]),
+            "lats": np.asarray(data["lats"], dtype=np.float64),
+            "lons": np.asarray(data["lons"], dtype=np.float64),
+        }
+    if payload["scalars"].shape != (len(payload["lats"]), len(payload["lons"])):
+        return None
+    _SCALAR_CACHE[path] = payload
+    return payload
+
+
+def _sliced_scalar_tensor(path: Path, x_grid: torch.Tensor) -> Optional[torch.Tensor]:
+    """Crop full ERA5 scalar field to x_grid bbox; same shape as old_europe_weight."""
+    payload = _load_scalar_npz(path)
+    if payload is None:
+        return None
+    lats, lons = payload["lats"], payload["lons"]
+    if not (np.all(np.diff(lats) > 0) and np.all(np.diff(lons) > 0)):
+        return None
+    cropped = slice_bbox(payload["scalars"], get_bbox(x_grid))
+    if cropped.shape != tuple(x_grid.shape[:2]):
+        return None
+    return torch.as_tensor(np.ascontiguousarray(cropped), dtype=torch.float32)
+
 
 class Era5Sample:
 
@@ -50,9 +93,19 @@ class Era5Sample:
         self.end_offset = end_offset
 
         self.x_grid = get_grid(lat_start, lat_end, lon_start, lon_end)
-        self.europe_weight = build_geographic_weights(self.x_grid, REGION_CONFIGS)
-        # TODO: Remove this once we have evaluated all the challenges before the update
-        self.old_europe_weight = build_geographic_weights(self.x_grid, OLD_REGION_CONFIGS)
+        # Pre-cutoff / fallback: Europe+Germany axis-aligned box weights.
+        self.old_europe_weight = build_geographic_weights(self.x_grid, REGION_CONFIGS)
+
+        self.wind_scalar = _sliced_scalar_tensor(WIND_SCALARS_PATH, self.x_grid)
+        self.solar_scalar = _sliced_scalar_tensor(SOLAR_SCALARS_PATH, self.x_grid)
+        self.temperature_scalar = _sliced_scalar_tensor(TEMPERATURE_SCALARS_PATH, self.x_grid)
+
+        if self.wind_scalar is None:
+            raise FileNotFoundError(f"Missing wind scalars at {WIND_SCALARS_PATH}")
+        if self.solar_scalar is None:
+            raise FileNotFoundError(f"Missing solar scalars at {SOLAR_SCALARS_PATH}")
+        if self.temperature_scalar is None:
+            raise FileNotFoundError(f"Missing temperature scalars at {TEMPERATURE_SCALARS_PATH}")
 
         if output_data is not None:
             self.predict_hours = output_data.shape[0]
