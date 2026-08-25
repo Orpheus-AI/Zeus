@@ -33,10 +33,6 @@ GERMANY_REGION_CONFIG: RegionConfig = RegionConfig(
         lon_range=GERMANY_LONGITUDE_RANGE,
         weight=GERMANY_WEIGHT,
     )
-# TODO: Remove this once we have evaluated all the challenges before the update
-OLD_REGION_CONFIGS: list[RegionConfig] = [
-    EUROPE_REGION_CONFIG,
-]
 
 REGION_CONFIGS: list[RegionConfig] = [
     EUROPE_REGION_CONFIG,
