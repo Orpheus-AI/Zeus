@@ -18,7 +18,7 @@
 # DEALINGS IN THE SOFTWARE.
 import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set,Tuple
 
 import bittensor as bt
 import numpy as np
@@ -239,6 +239,7 @@ def compute_avg_ranks(
     rank_history: Dict[str, List[float]],
     window_size: int,
     miners_hotkeys: List[str],
+    old_inactive_miners_hotkeys: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Calculates a rank for each hotkey by taking the average of their last window_size ranks from rank_history
@@ -256,6 +257,9 @@ def compute_avg_ranks(
     miners_metadata = []
     for uid, hotkey in zip(uids, hotkeys):
         if hotkey not in miners_hotkeys: continue
+        if old_inactive_miners_hotkeys is not None and hotkey in old_inactive_miners_hotkeys: continue
+
+        
         history = rank_history.get(str(hotkey), [])
         
         if len(history) >= window_size:

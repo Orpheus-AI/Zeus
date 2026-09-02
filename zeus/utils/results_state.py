@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 import json
 import os
 import sqlite3
@@ -6,7 +6,7 @@ import time
 import pandas as pd
 import numpy as np
 import bittensor as bt
-from zeus.validator.constants import RANK_HISTORY_DATABASE_LOCATION, RANK_HISTORY_PRUNE_DAYS, RANK_HISTORY_ALLOWED_ABSENCE
+from zeus.validator.constants import RANK_HISTORY_DATABASE_LOCATION, RANK_HISTORY_PRUNE_DAYS, RANK_HISTORY_ALLOWED_ABSENCE, RANK_HISTORY_ALLOWED_PENALTY_LIMIT
 
 def get_db_connection():
     conn = sqlite3.connect(str(RANK_HISTORY_DATABASE_LOCATION), timeout=30.0)
@@ -14,6 +14,35 @@ def get_db_connection():
     conn.execute("PRAGMA busy_timeout=30000;") # if 2 writes or writes and deletes the same time then it will wait for 30 seconds until we get an error
     conn.row_factory = sqlite3.Row
     return conn
+
+def _ensure_got_penalty_column(cursor) -> None:
+    """Add got_penalty to existing DBs created before the column existed, then backfill."""
+    cols = {row[1] for row in cursor.execute("PRAGMA table_info(challenge_ranks)")}
+    if "got_penalty" in cols:
+        return
+
+    cursor.execute(
+        "ALTER TABLE challenge_ranks ADD COLUMN got_penalty INTEGER NOT NULL DEFAULT 0"
+    )
+    # Absences are always penalties.
+    cursor.execute(
+        "UPDATE challenge_ranks SET got_penalty = 1 WHERE is_participated = 0"
+    )
+    # Participants rewritten to the challenge's absence penalty rank.
+    cursor.execute(
+        """
+        UPDATE challenge_ranks
+        SET got_penalty = 1
+        WHERE is_participated = 1
+          AND (state_key, challenge_enddate, rank) IN (
+            SELECT state_key, challenge_enddate, MAX(rank)
+            FROM challenge_ranks
+            WHERE is_participated = 0
+            GROUP BY state_key, challenge_enddate
+          )
+        """
+    )
+    bt.logging.info("Added and backfilled got_penalty column on challenge_ranks.")
 
 def init_result_state_db():
     os.makedirs(RANK_HISTORY_DATABASE_LOCATION.parent, exist_ok=True)
@@ -26,10 +55,12 @@ def init_result_state_db():
                 miner_hotkey TEXT,
                 challenge_enddate REAL,
                 rank REAL,
+                got_penalty BOOLEAN,
                 is_participated BOOLEAN,
                 PRIMARY KEY (state_key, miner_hotkey, challenge_enddate)
             )
-        """)
+        """) # NOTE that got_penalty is set to TRUE for miners that didn't participate in the challenge for consistency. I.e. if is_participated is false then got_penalty is true. 
+        _ensure_got_penalty_column(cursor)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_history 
             ON challenge_ranks(state_key, miner_hotkey, challenge_enddate DESC)
@@ -113,6 +144,16 @@ class ResultsState:
 
     # update rank history
     def insert_rank_history(self, rewards: np.ndarray, hotkeys_list: List[str], miner_penalty_bool_list: List[bool], challenge_enddate: float):
+        """
+        Clarifying non-participation vs. penalties:
+        We use is_participated for miners with an existing rank history. 
+        If a miner goes offline (e.g., machine down), we assign them a poor rank (e.g., 23) 
+        for the current challenge. This prevents miners from strategically dodging challenges 
+        to protect their historical rank when they expect to make bad predictions.
+
+        For active miners, defined as post-v2 neurons on the blockchain listed in get_available_uids(), 
+        failing to respond to a challenge automatically results in the maximum (worst) possible rank.
+        """
         if len(rewards) == 0 or len(hotkeys_list) == 0:
             bt.logging.warning(f"[ResultsState] insert_rank_history called with empty rewards/hotkeys for {self.name}; skipping.")
             return
@@ -138,16 +179,16 @@ class ResultsState:
             for rank, hotkey, penalty_bool in zip(rewards.tolist(), hotkeys_list, miner_penalty_bool_list):
                 if rank == max_rank_in_rewards and penalty_bool:
                     rank = penalty_rank
-                records_to_insert.append((self.name, str(hotkey), challenge_enddate, float(rank), True))
+                records_to_insert.append((self.name, str(hotkey), challenge_enddate, float(rank), True, penalty_bool))
                 
             # Add non-participating miners (the penalty)
             for hotkey in all_hotkeys:
                 if hotkey not in participating_set:
-                    records_to_insert.append((self.name, str(hotkey), challenge_enddate, penalty_rank, False))
+                    records_to_insert.append((self.name, str(hotkey), challenge_enddate, penalty_rank, False, True))
                     
             cursor.executemany("""
-                INSERT OR REPLACE INTO challenge_ranks (state_key, miner_hotkey, challenge_enddate, rank, is_participated)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO challenge_ranks (state_key, miner_hotkey, challenge_enddate, rank, is_participated, got_penalty)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, records_to_insert)
             
             # N-Strike History Removal
@@ -204,10 +245,20 @@ def prune_rank_database(current_hotkeys: List[str]) -> List[str]:
         conn.close()
 
 
-def load_rank_history_snapshot(state_keys: List[str]) -> Dict[str, Dict[str, List[float]]]:
-    """Load rank history for several state keys in one read-only snapshot."""
+def load_rank_history_snapshot(
+    state_keys: List[str],
+) -> Tuple[Dict[str, Dict[str, List[float]]], Dict[str, Set[str]]]:
+    """Load rank history and abusive-inactive hotkeys for several state keys.
+
+    Returns
+    -------
+    snapshot : Dict[state_key, Dict[hotkey, List[rank]]]
+    abusive_by_key : Dict[state_key, Set[hotkey]]
+        Hotkeys with at least RANK_HISTORY_ALLOWED_PENALTY_LIMIT rows whose last
+        RANK_HISTORY_ALLOWED_PENALTY_LIMIT entries all have got_penalty.
+    """
     if not state_keys:
-        return {}
+        return {}, {}
 
     cutoff_ts = (
         pd.Timestamp.now("UTC").floor("6h") - pd.Timedelta(hours=6)
@@ -219,7 +270,7 @@ def load_rank_history_snapshot(state_keys: List[str]) -> Dict[str, Dict[str, Lis
         cursor = conn.cursor()
         cursor.execute(
             f"""
-            SELECT state_key, miner_hotkey, rank
+            SELECT state_key, miner_hotkey, rank, got_penalty
             FROM challenge_ranks
             WHERE state_key IN ({placeholders})
               AND challenge_enddate <= ?
@@ -229,10 +280,27 @@ def load_rank_history_snapshot(state_keys: List[str]) -> Dict[str, Dict[str, Lis
         )
 
         snapshot: Dict[str, Dict[str, List[float]]] = {}
+        penalty_flags: Dict[str, Dict[str, List[bool]]] = {}
         for row in cursor.fetchall():
-            state_history = snapshot.setdefault(row["state_key"], {})
-            state_history.setdefault(row["miner_hotkey"], []).append(row["rank"])
-        return snapshot
+            state_key = row["state_key"] 
+            hotkey = row["miner_hotkey"]
+            state_history = snapshot.setdefault(state_key, {})
+            state_history.setdefault(hotkey, []).append(row["rank"])
+            penalty_flags.setdefault(state_key, {}).setdefault(hotkey, []).append(
+                bool(row["got_penalty"])
+            )
+
+        # Miners that competed for a while then stopped participating / keep
+        # getting penalties; weight_setter subtracts the 4-week grace set.
+        limit = RANK_HISTORY_ALLOWED_PENALTY_LIMIT
+        abusive_by_key: Dict[str, Set[str]] = {}
+        for state_key, by_hotkey in penalty_flags.items():
+            abusive_by_key[state_key] = {
+                hotkey
+                for hotkey, flags in by_hotkey.items()
+                if len(flags) >= limit and all(flags[-limit:])
+            }
+        return snapshot, abusive_by_key
     finally:
         conn.close()
     
@@ -294,12 +362,16 @@ def migrate_state_to_db(old_state_path: str):
                     # Backfill recursively backwards
                     current_time = base_time
                     for rank in reversed(ranks):
-                        records_to_insert.append((name, hotkey, current_time.timestamp(), float(rank), True))
+                        # got_penalty=0: JSON history has no penalty signal
+                        records_to_insert.append(
+                            (name, hotkey, current_time.timestamp(), float(rank), True, 0)
+                        )
                         current_time -= pd.Timedelta(hours=6)
                         
                 cursor.executemany("""
-                    INSERT OR REPLACE INTO challenge_ranks (state_key, miner_hotkey, challenge_enddate, rank, is_participated)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO challenge_ranks
+                        (state_key, miner_hotkey, challenge_enddate, rank, is_participated, got_penalty)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """, records_to_insert)
                 
         conn.commit()

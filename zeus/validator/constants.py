@@ -89,6 +89,8 @@ CURRENT_DIRECTORY: Path = Path.home()
 RANK_HISTORY_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "rank_history.db"
 RANK_HISTORY_PRUNE_DAYS = 365 # how many days a rank is kept in history
 RANK_HISTORY_ALLOWED_ABSENCE = 4 # the number of times a miner is alowes to be absert (i.e. not serve) before its rank history is deleted
+RANK_HISTORY_ALLOWED_PENALTY_LIMIT = 8 # consecutive penalties before a miner is treated as abusive/inactive for weights
+MINER_REGISTRATION_GRACE_WEEKS = 4 # newly registered miners are exempt from the abusive-inactive weight skip
 
 BEST_FORECASTS_DIRECTORY: Path = CURRENT_DIRECTORY  / "Zeus" / "best_prediction" 
 ERA5_CACHE_DIR: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "era5"
