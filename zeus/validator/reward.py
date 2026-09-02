@@ -68,24 +68,34 @@ def _geographic_weight_for_sample(sample: Era5Sample) -> torch.Tensor:
     return weight
 
 
-def should_apply_shape_penalty(correct_shape: torch.Size, prediction: torch.Tensor) -> bool:
+def should_apply_penalty(uid: int, correct_shape: torch.Size, prediction: torch.Tensor, variable: str) -> bool:
+    """
+    Penalty is applied when:
+    - the prediction is None
+    - the prediction shape does not match the correct shape
+    - the prediction values are not finite
+    - the prediction contains values that are less than 0 for surface_solar_radiation_downwards
+    """
     try:
         if prediction is None: 
            return True
             
         if prediction.numel() != np.prod(correct_shape):
-            bt.logging.warning(f"Shape penalty: {prediction.shape} != {correct_shape}")
-            shape_penalty = True
+            bt.logging.warning(f"UID: {uid} penalty: shape mismatch: {prediction.shape} != {correct_shape}")
+            return True
         elif not torch.isfinite(prediction).all():
-            bt.logging.warning(f"Shape penalty: {prediction.shape} != {correct_shape}")
-            shape_penalty = True
-        else:
-            shape_penalty = False
+            bt.logging.warning(f"UID: {uid} penalty: not all prediction values are finite")
+            return True
+        elif variable == "surface_solar_radiation_downwards" and (prediction < 0).any():
+            bt.logging.warning(
+                f"UID: {uid} penalty: there are predictions that are less than 0 for {variable}"
+            )
+            return True
 
     except Exception as e:
-        shape_penalty = True
+        return True
         
-    return shape_penalty
+    return False
 
 def calculate_competition_ranks(values: list[float], precision: int = 10) -> list[int]:
     """
@@ -143,7 +153,8 @@ def set_errors(
             del prediction
             
 
-        is_penalized = should_apply_shape_penalty(expected_shape, temp_tensor)
+        is_penalized = should_apply_penalty(uid, expected_shape, temp_tensor, sample.variable)
+        
         if is_penalized:
             europe_weighted_rmse = float('inf')
             europe_weighted_mae = float('inf')
