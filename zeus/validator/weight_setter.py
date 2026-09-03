@@ -213,7 +213,7 @@ class WeightSetter:
         
         metagraph = copy.deepcopy(self.metagraph)
 
-        miners_hotkeys, miners_uids = find_miners(
+        miners_hotkeys, miners_uids, miners_registered_last_4_weeks = find_miners(
             metagraph=metagraph,
             vpermit_tao_limit=self.config.neuron.vpermit_tao_limit,
             mainnet_uid=self.metagraph.netuid,
@@ -223,7 +223,7 @@ class WeightSetter:
         challenge_scaler = []
 
         state_keys = list(self.challenge_registry.keys())
-        rank_snapshot = load_rank_history_snapshot(state_keys)
+        rank_snapshot, abusive_by_key = load_rank_history_snapshot(state_keys)
 
         available_keys = [
             challenge_name
@@ -254,12 +254,14 @@ class WeightSetter:
                 else:
                     window_size = min(self.config.neuron.score_time_window_long, max_len)
 
+                old_inactive = abusive_by_key.get(state_key, set()) - miners_registered_last_4_weeks
                 miners_metadata = compute_avg_ranks(
                     hotkeys=metagraph.hotkeys,
                     rank_history=rank_history_dict,
                     uids=metagraph.uids,
                     window_size=window_size,
                     miners_hotkeys=miners_hotkeys,
+                    old_inactive_miners_hotkeys=old_inactive,
                 )
                 weights = calculate_challenge_weights(
                     miners_metadata=miners_metadata,
