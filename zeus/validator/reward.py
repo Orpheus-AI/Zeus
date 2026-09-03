@@ -38,6 +38,10 @@ _OLD_EUROPE_WEIGHT_CUTOFF_TS = datetime(
     2026, 8, 25, 18, 0, 0, tzinfo=timezone.utc
 ).timestamp()
 
+_PUNISH_NEGATIVE_SSRD_CUTOFF_TS = datetime(
+    2026, 9, 2, 18, 0, 0, tzinfo=timezone.utc
+).timestamp()
+
 
 def _geographic_weight_for_sample(sample: Era5Sample) -> torch.Tensor:
     """Select pre-cutoff box weights or post-cutoff variable-specific scalars."""
@@ -68,7 +72,7 @@ def _geographic_weight_for_sample(sample: Era5Sample) -> torch.Tensor:
     return weight
 
 
-def should_apply_penalty(uid: int, correct_shape: torch.Size, prediction: torch.Tensor, variable: str) -> bool:
+def should_apply_penalty(uid: int, correct_shape: torch.Size, prediction: torch.Tensor, variable: str, start_timestamp: int) -> bool:
     """
     Penalty is applied when:
     - the prediction is None
@@ -86,7 +90,7 @@ def should_apply_penalty(uid: int, correct_shape: torch.Size, prediction: torch.
         elif not torch.isfinite(prediction).all():
             bt.logging.warning(f"UID: {uid} penalty: not all prediction values are finite")
             return True
-        elif variable == "surface_solar_radiation_downwards" and (prediction < 0).any():
+        elif variable == "surface_solar_radiation_downwards" and (prediction < 0).any() and start_timestamp >= _PUNISH_NEGATIVE_SSRD_CUTOFF_TS:
             bt.logging.warning(
                 f"UID: {uid} penalty: there are predictions that are less than 0 for {variable}"
             )
@@ -153,7 +157,7 @@ def set_errors(
             del prediction
             
 
-        is_penalized = should_apply_penalty(uid, expected_shape, temp_tensor, sample.variable)
+        is_penalized = should_apply_penalty(uid, expected_shape, temp_tensor, sample.variable, sample.start_timestamp)
         
         if is_penalized:
             europe_weighted_rmse = float('inf')
