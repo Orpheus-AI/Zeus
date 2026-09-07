@@ -168,7 +168,7 @@ class Validator(BaseValidatorNeuron):
         spec = self.challenge_registry[state_key]
  
 
-        miners_hotkeys, _ = find_miners(
+        miners_hotkeys, _, _ = find_miners(
             self.metagraph,
             self.config.neuron.vpermit_tao_limit,
             self.metagraph.netuid,

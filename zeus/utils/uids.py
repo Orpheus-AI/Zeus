@@ -2,17 +2,28 @@ import random
 import bittensor as bt
 import numpy as np
 import pandas as pd
-from typing import Set
+from typing import List, Set, Tuple
+
+from zeus.validator.constants import MINER_REGISTRATION_GRACE_WEEKS
 
 ZEUS_V2_REGISTRATION_CUTOFF_UTC = pd.Timestamp("2026-03-17 18:00:00", tz="UTC")
 SECONDS_PER_BLOCK = 12
 
 
-def find_miners(metagraph: "bt.metagraph.Metagraph", vpermit_tao_limit: int, mainnet_uid: int, current_block: int):
+def find_miners(
+    metagraph: "bt.metagraph.Metagraph",
+    vpermit_tao_limit: int,
+    mainnet_uid: int,
+    current_block: int,
+) -> Tuple[List[str], List[int], Set[str]]:
   
     miners_hotkeys = []
     miners_uids = []
-    for uid,hotkey in zip(metagraph.uids, metagraph.hotkeys):
+    miners_registered_last_grace_weeks: Set[str] = set()
+    now_utc = pd.Timestamp.now("UTC")
+    grace_cutoff = now_utc - pd.Timedelta(weeks=MINER_REGISTRATION_GRACE_WEEKS)
+
+    for uid, hotkey in zip(metagraph.uids, metagraph.hotkeys):
         
         available = check_uid_availability(metagraph, uid, vpermit_tao_limit, mainnet_uid)
         reg_block = metagraph.block_at_registration[uid]
@@ -21,7 +32,13 @@ def find_miners(metagraph: "bt.metagraph.Metagraph", vpermit_tao_limit: int, mai
             miners_hotkeys.append(hotkey)
             miners_uids.append(uid)
 
-    return miners_hotkeys, miners_uids
+            blocks_elapsed = current_block - reg_block
+            seconds_elapsed = blocks_elapsed * SECONDS_PER_BLOCK
+            estimated_reg_date = now_utc - pd.Timedelta(seconds=seconds_elapsed)
+            if estimated_reg_date >= grace_cutoff:
+                miners_registered_last_grace_weeks.add(hotkey)
+
+    return miners_hotkeys, miners_uids, miners_registered_last_grace_weeks
 
 
 def check_uid_availability(

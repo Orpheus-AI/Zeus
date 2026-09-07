@@ -176,6 +176,7 @@ Geographic scalar weights across Earth: default 1.0, Europe 1.5, Germany 2.5
 > NOTE that the scalars would be changed on Friday the 21st of August 2026 and the above reflects the scalars used currently before the update comes into action!
 
 - **Subnet weights from rank history**: Incentive weights use a rolling average of challenge ranks **per variable × horizon**. When loading history, validators only keep ranks whose `challenge_enddate` is at or before the **last completed 6-hour window** (`floor(now UTC, 6h) − 6h`), so the current cycle is excluded. They then average the last `window_size` of those ranks (defaults: **4** for short-term, **8** for long-term). See [results_state.py](../zeus/utils/results_state.py) and the scoring notebook for details.
+- **Inactive / repeated penalties**: If a miner has at least **8** consecutive penalties on a challenge (including missed challenges, which are stored as penalties), they get **no weight** on that challenge, unless they registered in the **last 4 weeks**. Shape errors, missing responses, hash mismatches, and collusion all count as penalties.
 
 Miners with incorrect output shapes, non-finite values, or missing responses receive shape penalties.
 
