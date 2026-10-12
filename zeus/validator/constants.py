@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 import os
@@ -87,6 +88,10 @@ GERMANY_WEIGHT = 2.5
 CURRENT_DIRECTORY: Path = Path.home()
 
 RANK_HISTORY_DATABASE_LOCATION: Path = CURRENT_DIRECTORY / ".cache" / "zeus" / "rank_history.db"
+# After this instant, compute_avg_ranks uses mean(1 - win) over the window (win = rank == 1).
+WIN_RATE_AGGREGATION_CUTOFF_TS: float = datetime(
+    2026, 10, 13, 12, 0, 0, tzinfo=timezone.utc
+).timestamp()
 RANK_HISTORY_PRUNE_DAYS = 365 # how many days a rank is kept in history
 RANK_HISTORY_ALLOWED_ABSENCE = 4 # the number of times a miner is alowes to be absert (i.e. not serve) before its rank history is deleted
 RANK_HISTORY_ALLOWED_PENALTY_LIMIT = 8 # consecutive penalties before a miner is treated as abusive/inactive for weights
