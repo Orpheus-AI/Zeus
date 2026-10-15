@@ -204,8 +204,8 @@ class WeightSetter:
 
     def set_weights(self) -> bool:
         """
-        Sets the validator weights from rank_history: for each uid, average of last n ranks
-        (inverted so lower rank -> higher weight), then normalize and emit.
+        Sets validator weights from rank_history: rolling avg_rank over the last n
+        challenges (legacy rank pre-cutoff, win/loss score after), then blend and normalize.
 
         If burn_percent is configured, assigns that percentage to burn_uid
         and distributes the remainder proportionally among other miners.

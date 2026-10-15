@@ -27,7 +27,11 @@ import time
 from zeus.utils.misc import split_list
 from zeus.data.sample import Era5Sample
 from zeus.utils.compression import decompress_prediction
-from zeus.validator.constants import PERCENTAGE_GOING_TO_WINNER, LATITUDE_WEIGHTS_PATH
+from zeus.validator.constants import (
+    PERCENTAGE_GOING_TO_WINNER,
+    LATITUDE_WEIGHTS_PATH,
+    WIN_RATE_AGGREGATION_CUTOFF_TS
+)
 from zeus.validator.miner_data import MinerData
 from zeus.validator.metrics import custom_rmse, custom_mae
 from zeus.validator.collusion import apply_collusion_penalty, pick_threshold
@@ -245,19 +249,8 @@ def compute_avg_ranks(
     miners_hotkeys: List[str],
     old_inactive_miners_hotkeys: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Calculates a rank for each hotkey by taking the average of their last window_size ranks from rank_history
-     - if a hotkey doesn't have a rank history we give it a rank infinity.
-
-    Each miners_metadata entry includes fields for the performance DB API: rank (mean over window or None),
-    miner_window (window_size or 0). Pass the list to log_rank_aggregates with the ERA5 variable name.
-
-    Returns
-    -------
-    miners_metadata : list of dict
-        Payload for log_rank_aggregates (variable, miner_hotkey, rank, miner_window).
-    """
-    # Step 1: Calculate average rank for each hotkey
+    """Rolling average per hotkey over the last window_size stored ranks (lower avg_rank is better)."""
+    use_win_rate = time.time() >= WIN_RATE_AGGREGATION_CUTOFF_TS
     miners_metadata = []
     for uid, hotkey in zip(uids, hotkeys):
         if hotkey not in miners_hotkeys: continue
@@ -268,10 +261,14 @@ def compute_avg_ranks(
         
         if len(history) >= window_size:
             last_n = history[-window_size:]
-            avg_rank = np.mean(last_n)
-            # For tie-breaking: use ranks in reverse chronological order (most recent first)
-            # This allows breaking ties by comparing second-to-last, third-to-last, etc.
-            tie_breaker = tuple(reversed(last_n))
+            if use_win_rate:
+                wins = [1.0 if r == 1.0 else 0.0 for r in last_n]
+                avg_rank = 1.0 - (sum(wins) / window_size)
+                # Recent first; 0 = win, 1 = loss so ascending sort prefers more recent wins
+                tie_breaker = tuple(1.0 - w for w in reversed(wins))
+            else:
+                avg_rank = float(np.mean(last_n))
+                tie_breaker = tuple(reversed(last_n))
             miner_window_size = len(last_n)
         else:
             avg_rank = float('inf')
@@ -286,9 +283,6 @@ def compute_avg_ranks(
             'miner_window': miner_window_size
         })
     
-    # Step 2: Sort by average rank, breaking ties with ranks in reverse chronological order
-    # Lower rank is better, so we sort by (avg_rank, tie_breaker)
-    # tie_breaker is a tuple of ranks from most recent to oldest, so tuple comparison works correctly
     miners_metadata.sort(key=lambda x: (x['avg_rank'], x['tie_breaker']))
     return miners_metadata
 
