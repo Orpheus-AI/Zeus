@@ -86,7 +86,12 @@ PROXY_API_KEY=                  # Your Proxy API Key, you can generate it yourse
 
 # Optional integrations
 DISCORD_WEBHOOK=                # https://www.svix.com/resources/guides/how-to-make-webhook-discord/
+
+# Optional validator behavior
+SAVE_TOP_10_PREDICTIONS=false   # Save top-k verified predictions to NetCDF files
 ```
+
+`setup.sh` creates an empty `validator.env` template with these keys if the file does not exist yet.
 
 ### ECMWF
 > [!IMPORTANT]
@@ -134,8 +139,8 @@ The validator uses an **on-chain commit-reveal** flow so miners cannot copy othe
 | Phase | When it runs | What the validator does |
 |-------|----------------|--------------------------|
 | **1. Hash commit read** | At 00:45, 06:45, 12:45, 18:45 UTC (every 6 hours, subject to a minimum interval between requests). Miners should have committed before the hash window closes, currently minute `:45`. | Reads **hash commitments** from the Subtensor `Commitments` pallet for all eligible miners instead of requesting hashes over axon. Each commitment is unpacked into per-challenge hashes, checked for freshness against the expected challenge block, and stored in SQLite with the block it was committed at. Missing, empty, or stale commitments are recorded as bad. Implemented in `run_all_hash_phases()`. |
-| **2. Query best (long-horizon reveal)** | At least one hour after the hash phase, in the same 6-hour window (when `hour % 6 != 0`). | Queries only a **subset** of miners for 15-day challenges using `TimePredictionSynapse`: miners in the historical top set that also have an accepted on-chain hash, with a random fallback when no top miner is available. Wind-component challenges use the union of top miners from the u and v components so wind speed can come from consistent miners. Revealed predictions are verified against committed hashes; failed reveals are marked bad. Implemented in `run_initial_prediction_top_k_phases()`. |
-| **3. Scoring** | For challenges whose ground truth is ready, runs the **final prediction phase**. | Requests full predictions from miners who committed, verifies the hash reveal, computes RMSE/MAE vs ground truth, applies shape/collusion penalties, writes rank history, refreshes top miners, and logs performance data. Implemented via `database.score_and_prune()` and `run_final_prediction_phase()`. |
+| **2. Query best (long-horizon reveal)** | On the first forward pass after the hash phase once `hour % 6 != 0`, i.e. from 01:00, 07:00, 13:00, 19:00 UTC (about 15 minutes after the hash read). Runs once per 6-hour window. | Queries only a **subset** of miners for 15-day challenges using `TimePredictionSynapse`: miners in the historical top set that also have an accepted on-chain hash, with a random fallback when no top miner is available. Wind-component challenges use the union of top miners from the u and v components so wind speed can come from consistent miners. Revealed predictions are verified against committed hashes; failed reveals are marked bad. Implemented in `run_initial_prediction_top_k_phases()`. |
+| **3. Scoring** | For challenges whose ground truth is ready, runs the **final prediction phase**. | Requests full predictions from miners who committed, verifies the hash reveal, computes RMSE/MAE vs ground truth, applies shape/collusion penalties, writes rank history, refreshes top miners, and logs performance data. Implemented via `database.score_and_prune()` and `run_final_prediction_phase()`. Scoring is only attempted when `hour % 6` is 1, 2 or 3 UTC, so it never overlaps the hash phase. |
 
 Timing is controlled by [schedule_time.py](../zeus/utils/schedule_time.py) (`is_hash_commit_time`, `is_query_best_time`).
 
@@ -149,6 +154,7 @@ Validator state is now stored in SQLite instead of only in JSON:
 | Rank history and top miners | `~/.cache/zeus/rank_history.db` | Stores per-challenge miner ranks and ordered top-miner lists used for top-k querying and weight calculation. |
 | ERA5 cache | `~/.cache/zeus/era5` | Stores downloaded ERA5 data needed for scoring. |
 | Burn amounts | `~/.cache/zeus/burn_amounts.json` | Caches per-epoch burn amounts fetched from the performance API. |
+| Top-miner predictions (optional) | `~/Zeus/best_prediction` | NetCDF files of verified top-k predictions, written only when `SAVE_TOP_10_PREDICTIONS=true`. |
 
 On startup, the validator initializes the rank-history database and migrates older `state_v3.json` data when available. Rank history is kept for up to `RANK_HISTORY_PRUNE_DAYS`, and miners that are absent for `RANK_HISTORY_ALLOWED_ABSENCE` consecutive challenge results can have their per-challenge rank history removed. The top-miner list is maintained per challenge and is used by the query-best reveal phase.
 
@@ -163,13 +169,13 @@ Weight setting now runs in a dedicated background `WeightSetter` thread instead 
 - Respects the subnet weight rate limit from chain hyperparameters.
 - Loads a single SQLite rank snapshot for all challenge keys when calculating weights.
 
-Weights are calculated from rolling average ranks. The default windows are `--neuron.score_time_window_short 4` for short-term challenges and `--neuron.score_time_window_long 8` for long-term challenges. For each available challenge, the best ranked eligible miner receives most of that challenge's weight (`PERCENTAGE_GOING_TO_WINNER`), the remainder is distributed logarithmically, and challenge weights are combined using the variable and time-window weights in [constants.py](../zeus/validator/constants.py). If there is no rank history yet, the validator temporarily rewards miners that have responded recently.
+Weights are calculated from each miner's win rate (the fraction of rank-1 finishes) over its most recent ranks; ties are broken in favour of the most recent wins. Before 16 October 2026 12:00 UTC (`WIN_RATE_AGGREGATION_CUTOFF_TS`) the rolling average rank was used instead. The default windows are `--neuron.score_time_window_short 4` for short-term challenges and `--neuron.score_time_window_long 8` for long-term challenges. Miners that have at least `RANK_HISTORY_ALLOWED_PENALTY_LIMIT` (8) consecutive penalties on a challenge get no weight for it, unless they registered within the last `MINER_REGISTRATION_GRACE_WEEKS` (4) weeks. For each available challenge, the best eligible miner receives most of that challenge's weight (`PERCENTAGE_GOING_TO_WINNER`), the remainder is distributed logarithmically, and challenge weights are combined using the variable and time-window weights in [constants.py](../zeus/validator/constants.py). If there is no rank history yet, the validator temporarily rewards miners that have responded recently.
 
 Burn is skipped on testnet. On mainnet, the validator fetches per-epoch burn entries from the performance API and applies them before emitting weights. If burn data cannot be fetched, it falls back to `--neuron.burn_percent` (default `0.2`) and can send a Discord notification if `DISCORD_WEBHOOK` is configured.
 
 ## Hardware requirements
 We strive to make validation as simple as possible on our subnet, aiming to minimise storage and hardware requirements for our validators.
-Only a couple days of environmental data need to be stored at a time, which take around 1GB of storage. Miner hashes of their predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which can reach around 15GB. 
+Only a rolling window of environmental data needs to be stored: the ERA5 cache keeps 19 days per variable (from 5 to 23 days ago, as ERA5 lags real time by about 5 days). Miner hashes of their predictions are also temporarily stored in an SQLite database for challenges where the ground-truth is not yet known, which can reach around 15GB. 
 Therefore we recommend a total storage of around 80GB, allowing for ample space to install all dependencies and store the miner predictions.
 
 Data processing is done locally, but since this has been highly optimised, you will also **not need any GPU** or CUDA support. You will only need a decent CPU machine, where we recommend having at least 16GB of RAM. Since data is loaded over the internet, it is useful to have at least a moderately decent (>5GBit/s) internet connection.
